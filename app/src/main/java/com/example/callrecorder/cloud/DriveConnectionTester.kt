@@ -48,26 +48,23 @@ class DriveConnectionTester(private val context: Context) {
         val steps = mutableListOf<TestStep>()
 
         // ---- Step 1: runtime permission -----------------------------------------------------
+        // Missing GET_ACCOUNTS is reported as advisory (SKIP) rather than a hard failure: the
+        // address can still be handed straight to the com.google authenticator, and if that works
+        // the sync works too. But without the permission the in-app account list stays empty, so
+        // the user cannot pick an account - which is worth saying out loud.
         val permissionGranted = repository.hasAccountsPermission()
         steps += TestStep(
             label = "Android 'Find accounts on this device' (GET_ACCOUNTS)",
-            status = if (permissionGranted) StepStatus.PASS else StepStatus.FAIL,
+            status = if (permissionGranted) StepStatus.PASS else StepStatus.SKIP,
             detail = if (permissionGranted) {
                 "Granted. The app can list ${repository.totalAccountCount()} account(s) on this phone."
             } else {
-                "Not granted, so AccountManager returns an empty list and GoogleAuthUtil cannot " +
-                    "resolve ANY account. Grant it with the button below (Settings > Apps > " +
-                    "Call Recorder > Permissions > Accounts also works)."
+                "Not granted: AccountManager returns an empty list, so 'Choose from this device' will " +
+                    "show nothing and GoogleAuthUtil may fail to resolve the account. Grant it with the " +
+                    "button below (Settings > Apps > Call Recorder > Permissions > Accounts also works). " +
+                    "Continuing with the address you typed as a fallback."
             }
         )
-        if (!permissionGranted) {
-            return@withContext Report(
-                ok = false,
-                headline = "Grant the accounts permission first",
-                steps = steps,
-                consentIntent = null
-            )
-        }
 
         // ---- Step 2: the saved address resolves to a device account -------------------------
         val credentialResult = authManager.credentialResult()
@@ -156,11 +153,15 @@ class DriveConnectionTester(private val context: Context) {
 
         val failed = steps.firstOrNull { it.status == StepStatus.FAIL }
         val ok = failed == null
+        val advisory = steps.firstOrNull { it.status == StepStatus.SKIP }
         AppPrefs.setDriveConsentNeeded(context, !ok && consent != null)
         Report(
             ok = ok,
-            headline = if (ok) "Drive is ready - recordings will upload to /CallRecordings"
-            else failed?.label ?: "Drive connection failed",
+            headline = when {
+                !ok -> failed?.label ?: "Drive connection failed"
+                advisory != null -> "Drive works, but grant the accounts permission too"
+                else -> "Drive is ready - recordings will upload to /CallRecordings"
+            },
             steps = steps,
             consentIntent = consent
         )
