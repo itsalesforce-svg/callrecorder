@@ -23,14 +23,18 @@ files it created itself).
 ### Link an account (do this in order)
 
 1. **Settings > Accounts** on the phone must contain the Google account. The app cannot add one for you.
-2. On the app's Settings screen tap **Grant accounts permission**. Android hides the account list from
-   apps unless the runtime permission `GET_ACCOUNTS` is granted, and without it
-   `AccountManager.getAccountsByType("com.google")` returns an empty array — every account lookup then
+   It must also be the account the phone is signed in to Play services with, because that is the only
+   account Play services will mint an OAuth token for.
+2. `GET_ACCOUNTS` must be granted. The app asks for its runtime permissions on **first launch**; if you
+   dismissed that prompt, open the Permissions screen (or the Drive card on Settings) and tap
+   **Grant accounts permission**. Android hides the account list from apps without this permission, so
+   `AccountManager.getAccountsByType("com.google")` returns an empty array and every account lookup
    fails with "account is null" / "not available on this phone".
 3. Tap **Choose from this device** and pick the address (preferred), or type it exactly as
    `Account.name` (the *e-mail*, not the display name, no trailing spaces).
 4. Tap **Test Drive connection**. Four checks run and each one reports pass/fail:
-   1. `GET_ACCOUNTS` granted,
+   1. `GET_ACCOUNTS` granted (reported as a warning, not a hard stop, because the address can still
+      be handed straight to the `com.google` authenticator),
    2. saved address resolves to an account on this device,
    3. Google Play services mints an OAuth token for `drive.file`,
    4. the Drive API accepts that token (`about` round-trip).
@@ -47,6 +51,7 @@ files it created itself).
 | `Google Play services cannot issue a token (status …)` | Play services missing, disabled, or the account is paused | update/enable Play services, open Gmail once, sign in again |
 | `Google Drive auth library is missing from the APK` | `com.google.android.gms:play-services-auth` not on the runtime classpath | keep the dependency in `app/build.gradle.kts` — `google-api-client-android` declares it as `provided`, it is **not** pulled in for you |
 | `accessNotConfigured` | Drive API disabled for the Cloud project whose OAuth client you use | enable *Google Drive API* in Cloud Console |
+| `Another Google account is visible to this app` (warning row after a failure) | the phone is signed in to Play services with a *different* mailbox than the saved address | tap **Use … instead** under the e-mail field, then test again |
 | `TLS handshake with Google failed` | wrong clock, VPN, proxy or Private DNS | fix device date/time, disable the VPN/proxy, retry |
 
 If you create your own OAuth client in Google Cloud (needed only if you switch away from
