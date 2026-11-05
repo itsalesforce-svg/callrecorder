@@ -49,6 +49,12 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Manual recorder for meetings, podcasts and voice notes. -->
+        <service
+            android:name=".service.VoiceRecorderService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
         <!-- Exposes the debug log to the share sheet without a file:// URI (API 24+). -->
         <provider
             android:name="androidx.core.content.FileProvider"

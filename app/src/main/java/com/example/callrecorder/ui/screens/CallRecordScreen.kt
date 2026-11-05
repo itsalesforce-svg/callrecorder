@@ -24,7 +24,8 @@ import java.util.Locale
 fun CallRecordScreen(
     viewModel: CallRecordViewModel,
     onNavigateToSettings: () -> Unit,
-    onNavigateToPermissions: () -> Unit
+    onNavigateToPermissions: () -> Unit,
+    onNavigateToVoiceRecorder: () -> Unit
 ) {
     val records by viewModel.records.collectAsState()
     val playingId by viewModel.currentlyPlayingId.collectAsState()
@@ -43,6 +44,9 @@ fun CallRecordScreen(
             TopAppBar(
                 title = { Text("Call Recorder", fontWeight = FontWeight.Bold) },
                 actions = {
+                    IconButton(onClick = onNavigateToVoiceRecorder) {
+                        Icon(Icons.Default.Mic, contentDescription = "Record a meeting, podcast or voice note")
+                    }
                     IconButton(onClick = { viewModel.triggerCloudSync() }) {
                         Icon(Icons.Default.CloudSync, contentDescription = "Sync to Google Drive")
                     }
@@ -91,14 +95,17 @@ fun CallRecordScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "No call recordings yet",
+                            text = "No recordings yet",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.outline
                         )
                         Text(
-                            text = "Recordings will appear automatically on phone calls",
+                            text = "Calls are captured automatically. For a meeting, podcast or voice " +
+                                "note, tap the microphone above.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline
+                            color = MaterialTheme.colorScheme.outline,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 32.dp)
                         )
                     }
                 }
@@ -143,6 +150,7 @@ fun CallRecordItem(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val isVoiceRecording = com.example.callrecorder.data.VoiceCategory.isVoice(record.callType)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = record.contactName.ifEmpty { "Unknown Caller" },
@@ -150,7 +158,12 @@ fun CallRecordItem(
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = record.phoneNumber,
+                        // A voice recording has no phone number; show what it is instead of a blank line.
+                        text = if (isVoiceRecording) {
+                            "Voice recording"
+                        } else {
+                            record.phoneNumber
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -180,7 +193,14 @@ fun CallRecordItem(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = if (record.callType == "INCOMING") Icons.Default.CallReceived else Icons.Default.CallMade,
+                        imageVector = when (record.callType) {
+                            "INCOMING" -> Icons.Default.CallReceived
+                            "OUTGOING" -> Icons.Default.CallMade
+                            com.example.callrecorder.data.VoiceCategory.MEETING -> Icons.Default.Groups
+                            com.example.callrecorder.data.VoiceCategory.PODCAST -> Icons.Default.Podcasts
+                            com.example.callrecorder.data.VoiceCategory.NOTE -> Icons.Default.EditNote
+                            else -> Icons.Default.CallMade
+                        },
                         contentDescription = null,
                         modifier = Modifier.size(14.dp),
                         tint = MaterialTheme.colorScheme.primary

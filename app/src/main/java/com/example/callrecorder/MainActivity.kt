@@ -18,11 +18,13 @@ import com.example.callrecorder.auth.AppPrefs
 import com.example.callrecorder.ui.navigation.AppNavigationGraph
 import com.example.callrecorder.ui.viewmodel.CallRecordViewModel
 import com.example.callrecorder.ui.viewmodel.SettingsViewModel
+import com.example.callrecorder.ui.viewmodel.VoiceRecorderViewModel
 
 class MainActivity : ComponentActivity() {
 
     private val callRecordViewModel: CallRecordViewModel by viewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
+    private val voiceRecorderViewModel: VoiceRecorderViewModel by viewModels()
 
     /**
      * Asks for the runtime permissions on first launch.
@@ -87,7 +89,8 @@ class MainActivity : ComponentActivity() {
                     AppNavigationGraph(
                         navController = navController,
                         callRecordViewModel = callRecordViewModel,
-                        settingsViewModel = settingsViewModel
+                        settingsViewModel = settingsViewModel,
+                        voiceRecorderViewModel = voiceRecorderViewModel
                     )
                 }
             }

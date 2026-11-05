@@ -76,7 +76,13 @@ class GoogleDriveSyncWorker(
                         continue
                     }
 
-                    when (val result = uploader.uploadCallAudio(record.filePath, record.phoneNumber, record.timestamp)) {
+                    when (val result = // Voice recordings have no phone number; their label is what makes the Drive file
+                    // recognisable ("Meeting_..."), so fall back to it.
+                    uploader.uploadCallAudio(
+                        record.filePath,
+                        record.phoneNumber.ifBlank { record.contactName },
+                        record.timestamp
+                    )) {
                         is GoogleDriveUploader.UploadResult.Success -> {
                             dao.updateSyncStatus(record.id, true)
                             uploaded++

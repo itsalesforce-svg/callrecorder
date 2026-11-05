@@ -28,6 +28,16 @@ object RecordingStorage {
         return File(directory(context), "CALL_${sanitizeForName(safe)}_$timestamp.m4a")
     }
 
+    /**
+     * File for a manual voice recording. The category goes into the name so a meeting or podcast is
+     * recognisable in a file manager and in Drive, where the app is not around to explain it.
+     */
+    fun fileForVoice(context: Context, callType: String, timestamp: Long): File {
+        val stamp = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.US)
+            .format(java.util.Date(timestamp))
+        return File(directory(context), "VOICE_${VoiceCategory.filePrefix(callType)}_$stamp.m4a")
+    }
+
     private fun sanitizeForName(value: String): String =
         value.replace(Regex("[^A-Za-z0-9_+-]"), "_").take(32)
 
