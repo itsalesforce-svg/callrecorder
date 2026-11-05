@@ -142,6 +142,18 @@ class GoogleAccountRepository(private val context: Context) {
     /** Best guess for the account the user means, used when they save just a bare address. */
     fun onlyGoogleAccount(): VisibleAccount? = googleAccounts().singleOrNull()
 
+    /**
+     * A different Google account that IS visible to the app, if any. Used to suggest a fix when the
+     * saved address turns out not to be the mailbox the phone is actually signed in with - that is
+     * the usual reason Google answers "no chosen account found".
+     */
+    fun anotherGoogleAccount(exceptName: String?): VisibleAccount? {
+        val except = exceptName?.trim().orEmpty()
+        return googleAccounts().firstOrNull {
+            except.isEmpty() || !it.name.trim().equals(except, ignoreCase = true)
+        }
+    }
+
     fun looksLikeEmail(value: String?): Boolean {
         val v = value?.trim().orEmpty()
         val at = v.indexOf('@')

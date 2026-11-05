@@ -38,6 +38,7 @@ object AppPrefs {
     private const val KEY_LAST_RECORDING_ISSUE = "last_call_recording_issue"
     private const val KEY_DRIVE_FOLDER_ID = "drive_folder_id"
     private const val KEY_MIGRATED = "prefs_migrated_v2"
+    private const val KEY_STARTUP_PERMISSIONS_ASKED = "startup_permissions_asked"
 
     /** Value written by the previous SettingsViewModel as a *default*, never by a real user choice. */
     private const val LEGACY_PLACEHOLDER_ACCOUNT = "itsalesforce@gmail.com"
@@ -139,6 +140,17 @@ object AppPrefs {
     // -----------------------------------------------------------------------------------------
     // Recording / sync preferences
     // -----------------------------------------------------------------------------------------
+
+    /**
+     * True once the app has asked for its runtime permissions on its own. Asking on first launch is
+     * what prevents the "account is null" state without the user having to discover that
+     * GET_ACCOUNTS was never granted.
+     */
+    fun startupPermissionsAsked(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_STARTUP_PERMISSIONS_ASKED, false)
+
+    fun setStartupPermissionsAsked(context: Context, value: Boolean) =
+        prefs(context).edit().putBoolean(KEY_STARTUP_PERMISSIONS_ASKED, value).apply()
 
     fun autoRecord(context: Context): Boolean = prefs(context).getBoolean(KEY_AUTO_RECORD, true)
 

@@ -152,6 +152,22 @@ class DriveConnectionTester(private val context: Context) {
         }
 
         val failed = steps.firstOrNull { it.status == StepStatus.FAIL }
+
+        // When the address cannot be turned into a token, show the accounts the app *can* see: the
+        // usual cause is that the phone is signed in with a different mailbox.
+        if (failed != null) {
+            val alternative = repository.anotherGoogleAccount(ready.accountName)
+            if (alternative != null) {
+                steps += TestStep(
+                    label = "Another Google account is visible to this app",
+                    status = StepStatus.SKIP,
+                    detail = "${alternative.name} is on this phone and can be used by the app. If " +
+                        "that is the account you signed in to the Play Store with, save that address " +
+                        "above instead of ${ready.accountName}."
+                )
+            }
+        }
+
         val ok = failed == null
         val advisory = steps.firstOrNull { it.status == StepStatus.SKIP }
         AppPrefs.setDriveConsentNeeded(context, !ok && consent != null)

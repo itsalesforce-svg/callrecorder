@@ -107,11 +107,17 @@ fun SettingsScreen(
 
                     state.detail?.let { detail ->
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            detail,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                detail,
+                                modifier = Modifier.padding(10.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
                     }
 
                     if (!state.accountsPermissionGranted) {
@@ -224,6 +230,25 @@ fun SettingsScreen(
                         Icon(Icons.Default.CloudDone, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("Save Google account")
+                    }
+
+                    // If the phone is signed in with a different mailbox, the address above can
+                    // never produce a token. Offer the account the app *can* see, one tap away.
+                    if (state.linkState == DriveLinkState.FAILED || state.linkState == DriveLinkState.NO_ACCOUNT) {
+                        val suggestion = state.deviceAccounts.firstOrNull { account ->
+                            !account.name.equals(state.googleAccountName, ignoreCase = true)
+                        }
+                        if (suggestion != null) {
+                            Spacer(Modifier.height(4.dp))
+                            TextButton(
+                                onClick = { viewModel.linkDeviceAccount(suggestion.name) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Person, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Use ${suggestion.name} instead")
+                            }
+                        }
                     }
 
                     Spacer(Modifier.height(8.dp))
