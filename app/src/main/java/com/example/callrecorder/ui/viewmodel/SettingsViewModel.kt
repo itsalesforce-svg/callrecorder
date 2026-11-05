@@ -3,15 +3,20 @@ package com.example.callrecorder.ui.viewmodel
 import android.accounts.AccountManager
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.callrecorder.auth.GoogleAuthManager
 import com.example.callrecorder.worker.SyncScheduler
+import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class SettingsUiState(
@@ -33,6 +38,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val accountPrefs = application.getSharedPreferences("call_recorder_prefs", Context.MODE_PRIVATE)
     private val _uiState = MutableStateFlow(loadSettings())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+    private val _driveAuthorizationRequests = MutableSharedFlow<Intent>(extraBufferCapacity = 1)
+    val driveAuthorizationRequests: SharedFlow<Intent> = _driveAuthorizationRequests.asSharedFlow()
 
     init {
         updatePeriodicSync()
@@ -111,6 +118,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         .user?.emailAddress ?: email
                 }
             }
+            val recoverableAuthError = generateSequence(result.exceptionOrNull()) { it.cause }
+                .filterIsInstance<UserRecoverableAuthIOException>()
+                .firstOrNull()
+            if (recoverableAuthError != null) {
+                _uiState.value = _uiState.value.copy(
+                    isDriveTestRunning = false,
+                    driveConnected = null,
+                    driveConnectionMessage = "Google needs your permission to access Drive. Complete the Google authorization prompt."
+                )
+                _driveAuthorizationRequests.emit(recoverableAuthError.intent)
+                return@launch
+            }
+
             _uiState.value = if (result.isSuccess) {
                 _uiState.value.copy(
                     isDriveTestRunning = false,

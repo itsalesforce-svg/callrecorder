@@ -1,5 +1,8 @@
 package com.example.callrecorder.ui.screens
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -26,6 +29,16 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { viewModel.refreshCallRecordingIssue() }
     val context = LocalContext.current
     val storagePath = remember(context) { RecordingStorage.directory(context).absolutePath }
+    val driveAuthorizationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) viewModel.testDriveConnection()
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.driveAuthorizationRequests.collect { authorizationIntent ->
+            driveAuthorizationLauncher.launch(authorizationIntent)
+        }
+    }
     var accountEmailDraft by remember(state.googleAccountName) {
         mutableStateOf(state.googleAccountName ?: "itsalesforce@gmail.com")
     }
