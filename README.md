@@ -234,8 +234,17 @@ If the cache is ever evicted, the run prints a warning and a new SHA-1; register
 a minute. To make it independent of the cache entirely, store a keystore as the secret
 `DEBUG_KEYSTORE_BASE64` (commands below) and it always wins.
 
-The cached keystore was introduced after the build that produced `9A:D1:4B:E4:...`, so the next APK
-reports a **new** SHA-1. That is the last time it changes.
+The cached keystore was introduced after the build that produced `9A:D1:4B:E4:...`, so the APK reports
+a **new** SHA-1 once. That value is now pinned and published by every build:
+
+```
+Package name: com.example.callrecorder
+SHA-1:        69:D8:18:E2:B3:EB:B4:18:02:04:8D:70:20:3A:01:75:99:CE:3F:ED
+```
+
+Each run emits it as a Checks annotation (`Signing SHA-1 register this in Cloud Console`) and writes it
+to the run summary, and **Settings > Debug & Diagnostics** shows the value read back from the installed
+APK - all three must agree. Register that one pair once and Drive sync stops being blocked.
 
 ## OPPO / ColorOS (and other aggressive OEM skins)
 
