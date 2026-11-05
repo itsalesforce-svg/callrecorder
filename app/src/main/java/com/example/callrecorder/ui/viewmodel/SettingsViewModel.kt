@@ -1,48 +1,416 @@
 package com.example.callrecorder.ui.viewmodel
 
 import android.app.Application
-import android.content.Context
+import android.accounts.AccountManager
+import android.content.Intent
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.callrecorder.auth.AppPrefs
+import com.example.callrecorder.auth.GoogleAccountRepository
+import com.example.callrecorder.auth.GoogleAuthManager
+import com.example.callrecorder.cloud.DriveConnectionTester
+import com.example.callrecorder.worker.SyncScheduler
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/** How far the Drive link got; drives the colour/icon of the Drive status card. */
+enum class DriveLinkState {
+    NO_ACCOUNT,
+    LINKED_NOT_TESTED,
+    TESTING,
+    READY,
+    FAILED,
+    CONSENT_PENDING
+}
 
 data class SettingsUiState(
     val autoRecord: Boolean = true,
     val audioSource: String = "VOICE_COMMUNICATION",
+    val autoSync: Boolean = true,
     val syncWifiOnly: Boolean = true,
-    val googleAccountName: String? = "itsalesforce@gmail.com",
-    val syncIntervalHours: Long = 4
+    val syncIntervalHours: Long = 4,
+    val googleAccountName: String? = null,
+    val accountDraft: String = "",
+    val draftLooksValid: Boolean = true,
+    val accountsPermissionGranted: Boolean = false,
+    val deviceAccounts: List<GoogleAccountRepository.VisibleAccount> = emptyList(),
+    val totalAccounts: Int = 0,
+    val linkState: DriveLinkState = DriveLinkState.NO_ACCOUNT,
+    val headline: String? = null,
+    val detail: String? = null,
+    val steps: List<DriveConnectionTester.TestStep> = emptyList(),
+    val busy: Boolean = false,
+    val showAccountPicker: Boolean = false,
+    val consentIntent: Intent? = null,
+    val lastSyncSummary: String? = null
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val prefs = application.getSharedPreferences("call_recorder_settings", Context.MODE_PRIVATE)
-    private val _uiState = MutableStateFlow(loadSettings())
+    private val authManager = GoogleAuthManager(application)
+    private val repository = GoogleAccountRepository(application)
+    private val tester = DriveConnectionTester(application)
+
+    private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
-    private fun loadSettings(): SettingsUiState {
-        return SettingsUiState(
-            autoRecord = prefs.getBoolean("auto_record", true),
-            audioSource = prefs.getString("audio_source", "VOICE_COMMUNICATION") ?: "VOICE_COMMUNICATION",
-            syncWifiOnly = prefs.getBoolean("sync_wifi_only", true),
-            googleAccountName = prefs.getString("google_account", "itsalesforce@gmail.com"),
-            syncIntervalHours = prefs.getLong("sync_interval_hours", 4L)
-        )
+    init {
+        refresh()
     }
 
+    /**
+     * Re-reads the permission state, the account list and the last sync result.
+     * AccountManager is a binder call, so it runs on [Dispatchers.IO].
+     */
+    fun refresh() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val ctx = getApplication<Application>()
+                val previous = _uiState.value
+                val saved = AppPrefs.accountName(ctx)
+                val permission = repository.hasAccountsPermission()
+                val accounts = repository.googleAccounts()
+                val total = repository.totalAccountCount()
+                val consentPending = saved != null && AppPrefs.driveConsentNeeded(ctx)
+                val stillSameAccount = saved != null && saved == previous.googleAccountName
+                val linkState = when {
+                    previous.busy || previous.linkState == DriveLinkState.TESTING -> DriveLinkState.TESTING
+                    saved == null -> DriveLinkState.NO_ACCOUNT
+                    consentPending -> DriveLinkState.CONSENT_PENDING
+                    stillSameAccount && previous.linkState == DriveLinkState.READY -> DriveLinkState.READY
+                    stillSameAccount && previous.linkState == DriveLinkState.FAILED -> DriveLinkState.FAILED
+                    else -> DriveLinkState.LINKED_NOT_TESTED
+                }
+                _uiState.update {
+                    it.copy(
+                        autoRecord = AppPrefs.autoRecord(ctx),
+                        audioSource = AppPrefs.audioSource(ctx),
+                        autoSync = AppPrefs.autoSync(ctx),
+                        syncWifiOnly = AppPrefs.syncWifiOnly(ctx),
+                        syncIntervalHours = AppPrefs.syncIntervalHours(ctx),
+                        googleAccountName = saved,
+                        accountDraft = it.accountDraft.ifBlank { saved.orEmpty() },
+                        draftLooksValid = saved?.let { name -> repository.looksLikeEmail(name) } ?: true,
+                        accountsPermissionGranted = permission,
+                        deviceAccounts = accounts,
+                        totalAccounts = total,
+                        linkState = linkState,
+                        headline = headlineFor(linkState, saved, permission, accounts.size),
+                        detail = blockerDetail(permission, accounts.size, total, saved),
+                        lastSyncSummary = syncSummary()
+                    )
+                }
+            }
+        }
+    }
+
+    private fun headlineFor(
+        state: DriveLinkState,
+        saved: String?,
+        permission: Boolean,
+        visibleCount: Int
+    ): String = when (state) {
+        DriveLinkState.NO_ACCOUNT -> when {
+            !permission -> "Grant the accounts permission to see your Google accounts"
+            visibleCount == 0 -> "No Google account found on this phone"
+            else -> "Pick the Google account that should receive your recordings"
+        }
+        DriveLinkState.LINKED_NOT_TESTED -> "Linked: $saved (not tested yet)"
+        DriveLinkState.TESTING -> "Checking Drive access…"
+        DriveLinkState.READY -> "Drive is ready — $saved"
+        DriveLinkState.CONSENT_PENDING -> "Google is still waiting for your permission for $saved"
+        DriveLinkState.FAILED -> "Drive connection failed for $saved"
+    }
+
+    /** Non-null only while something structurally blocks the link, so the UI can nag once. */
+    private fun blockerDetail(
+        permission: Boolean,
+        visible: Int,
+        total: Int,
+        saved: String?
+    ): String? = when {
+        !permission ->
+            "Android hides the account list from apps unless GET_ACCOUNTS (a runtime permission) is " +
+                "granted. Without it the Drive client resolves your saved address to null and every " +
+                "sync fails - that is the 'account is null' you saw. Tap 'Grant accounts permission'."
+        visible == 0 && saved == null ->
+            "This app can see $total account(s) on the device, but none of type com.google. Add a " +
+                "Google account under Settings > Accounts; on ROMs without Play services also enable " +
+                "'Allow all apps to find accounts'."
+        else -> null
+    }
+
+    private fun syncSummary(): String? {
+        val ctx = getApplication<Application>()
+        val at = AppPrefs.lastSyncAt(ctx)
+        if (at == 0L) return null
+        val stamp = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(at))
+        val state = AppPrefs.lastSyncState(ctx) ?: "idle"
+        val uploaded = AppPrefs.lastSyncUploaded(ctx)
+        val failed = AppPrefs.lastSyncFailed(ctx)
+        val message = AppPrefs.lastSyncMessage(ctx)
+        return "$stamp · $state · $uploaded uploaded, $failed failed" +
+            (message?.let { " · $it" } ?: "")
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Account linking
+    // -----------------------------------------------------------------------------------------
+
+    fun onAccountDraftChanged(value: String) {
+        _uiState.update {
+            it.copy(
+                accountDraft = value,
+                draftLooksValid = value.isBlank() || repository.looksLikeEmail(value)
+            )
+        }
+    }
+
+    /** Save a typed address. Also the escape hatch when the system picker is unavailable. */
+    fun saveDraftAccount() {
+        val draft = _uiState.value.accountDraft.trim()
+        if (draft.isEmpty()) {
+            _uiState.update {
+                it.copy(
+                    linkState = DriveLinkState.FAILED,
+                    headline = "Type the Google address first",
+                    detail = "Use the account name shown in Settings > Accounts on this phone (spaces " +
+                        "are trimmed; the local part is matched case-insensitively).",
+                    steps = emptyList()
+                )
+            }
+            return
+        }
+        if (!repository.looksLikeEmail(draft)) {
+            _uiState.update {
+                it.copy(
+                    linkState = DriveLinkState.FAILED,
+                    headline = "\"$draft\" is not a usable Google account name",
+                    detail = "The Drive client needs the account *name* (an e-mail address such as " +
+                        "name@gmail.com), not the display name shown in the contacts app.",
+                    steps = emptyList()
+                )
+            }
+            return
+        }
+        linkAccount(draft)
+    }
+
+    fun linkDeviceAccount(name: String) {
+        setShowAccountPicker(false)
+        linkAccount(name)
+    }
+
+    private fun linkAccount(name: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val synthetic = repository.resolve(name) is GoogleAccountRepository.Resolution.Synthetic
+                AppPrefs.saveAccount(getApplication(), name, synthetic)
+            }
+            _uiState.update {
+                it.copy(
+                    googleAccountName = name,
+                    accountDraft = name,
+                    linkState = DriveLinkState.TESTING,
+                    headline = "Linked: $name",
+                    detail = null,
+                    steps = emptyList(),
+                    consentIntent = null
+                )
+            }
+            runConnectionTest()
+        }
+    }
+
+    fun unlinkAccount() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { AppPrefs.clearAccount(getApplication()) }
+            _uiState.update {
+                it.copy(
+                    googleAccountName = null,
+                    accountDraft = "",
+                    linkState = DriveLinkState.NO_ACCOUNT,
+                    steps = emptyList(),
+                    consentIntent = null,
+                    detail = null
+                )
+            }
+            refresh()
+        }
+    }
+
+    /** Intent for the Play services account chooser, or null when this build cannot offer it. */
+    fun systemChooserIntent(): Intent? = runCatching { authManager.chooseAccountIntent() }.getOrNull()
+
+    /** Handle the extra the chooser returns (AccountPicker.KEY_SELECTED_ACCOUNT). */
+    fun onSystemChooserResult(data: Intent?) {
+        val picked = data?.extras?.getString(GoogleAccountRepository.PICKER_SELECTED_ACCOUNT_EXTRA)
+        if (picked.isNullOrBlank()) {
+            _uiState.update {
+                it.copy(
+                    linkState = DriveLinkState.FAILED,
+                    headline = "The system picker returned no account",
+                    detail = "It was closed without a selection - on some ROMs it also crashes when " +
+                        "Google Play services is restricted. Use 'Choose from this device' or type the " +
+                        "address instead."
+                )
+            }
+            refresh()
+            return
+        }
+        linkAccount(picked)
+    }
+
+    fun setShowAccountPicker(show: Boolean) {
+        viewModelScope.launch {
+            if (!show) {
+                _uiState.update { it.copy(showAccountPicker = false) }
+                return@launch
+            }
+            val accounts = withContext(Dispatchers.IO) { repository.googleAccounts() }
+            _uiState.update { it.copy(deviceAccounts = accounts, showAccountPicker = true) }
+        }
+    }
+
+    /** Opens the system "add account" screen (works even without GET_ACCOUNTS). */
+    fun openDeviceAccountSettings() {
+        val ctx = getApplication<Application>()
+        runCatching {
+            ctx.startActivity(
+                Intent(Settings.ACTION_ADD_ACCOUNT).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Test / sync actions
+    // -----------------------------------------------------------------------------------------
+
+    fun runConnectionTest() {
+        if (_uiState.value.busy) return
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    busy = true,
+                    linkState = DriveLinkState.TESTING,
+                    headline = "Checking Drive access…",
+                    detail = null,
+                    steps = emptyList()
+                )
+            }
+            val report = try {
+                tester.run()
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                DriveConnectionTester.Report(
+                    ok = false,
+                    headline = "The test crashed: ${t.javaClass.simpleName}",
+                    steps = listOf(
+                        DriveConnectionTester.TestStep(
+                            label = "Unexpected error",
+                            status = DriveConnectionTester.StepStatus.FAIL,
+                            detail = t.message ?: "no message"
+                        )
+                    ),
+                    consentIntent = null
+                )
+            }
+            _uiState.update {
+                it.copy(
+                    busy = false,
+                    linkState = if (report.ok) DriveLinkState.READY else DriveLinkState.FAILED,
+                    headline = report.headline,
+                    detail = if (report.ok) null else report.failedStep?.detail,
+                    steps = report.steps,
+                    consentIntent = report.consentIntent,
+                    lastSyncSummary = syncSummary()
+                )
+            }
+        }
+    }
+
+    /** After the user answers Google's consent screen, re-run the test automatically. */
+    fun onConsentScreenReturned() {
+        _uiState.update { it.copy(consentIntent = null) }
+        runConnectionTest()
+    }
+
+    fun syncNow() {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            withContext(Dispatchers.IO) { SyncScheduler.scheduleImmediateSync(ctx) }
+            _uiState.update {
+                it.copy(
+                    linkState = DriveLinkState.TESTING,
+                    headline = "Upload queued — the next sync will run now",
+                    detail = null
+                )
+            }
+            delay(3_000)
+            refresh()
+        }
+    }
+
+    fun openAppPermissionSettings() {
+        val ctx = getApplication<Application>()
+        runCatching {
+            ctx.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(android.net.Uri.fromParts("package", ctx.packageName, null))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Toggles
+    // -----------------------------------------------------------------------------------------
+
     fun setAutoRecord(enabled: Boolean) {
-        prefs.edit().putBoolean("auto_record", enabled).apply()
-        _uiState.value = _uiState.value.copy(autoRecord = enabled)
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { AppPrefs.setAutoRecord(getApplication(), enabled) }
+            _uiState.update { it.copy(autoRecord = enabled) }
+        }
+    }
+
+    fun setAutoSync(enabled: Boolean) {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            withContext(Dispatchers.IO) {
+                AppPrefs.setAutoSync(ctx, enabled)
+                if (enabled) SyncScheduler.schedulePeriodicSync(ctx) else SyncScheduler.cancelPeriodicSync(ctx)
+            }
+            _uiState.update { it.copy(autoSync = enabled) }
+        }
     }
 
     fun setSyncWifiOnly(wifiOnly: Boolean) {
-        prefs.edit().putBoolean("sync_wifi_only", wifiOnly).apply()
-        _uiState.value = _uiState.value.copy(syncWifiOnly = wifiOnly)
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            withContext(Dispatchers.IO) {
+                AppPrefs.setSyncWifiOnly(ctx, wifiOnly)
+                if (AppPrefs.autoSync(ctx)) SyncScheduler.schedulePeriodicSync(ctx)
+            }
+            _uiState.update { it.copy(syncWifiOnly = wifiOnly) }
+        }
     }
 
     fun setAudioSource(source: String) {
-        prefs.edit().putString("audio_source", source).apply()
-        _uiState.value = _uiState.value.copy(audioSource = source)
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { AppPrefs.setAudioSource(getApplication(), source) }
+            _uiState.update { it.copy(audioSource = source) }
+        }
     }
 }
