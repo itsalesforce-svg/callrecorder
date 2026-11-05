@@ -64,14 +64,10 @@ class MainActivity : ComponentActivity() {
             }
 
             LaunchedEffect(Unit) {
-                val preferences = getSharedPreferences("call_recorder_settings", MODE_PRIVATE)
-                if (!preferences.getBoolean("first_permission_prompt_shown", false)) {
-                    val missing = runtimePermissions.filter {
-                        ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
-                    }
-                    if (missing.isNotEmpty()) showPermissionIntro = true
-                    preferences.edit().putBoolean("first_permission_prompt_shown", true).apply()
+                val missing = runtimePermissions.filter {
+                    ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
                 }
+                if (missing.isNotEmpty()) showPermissionIntro = true
             }
 
             MaterialTheme {

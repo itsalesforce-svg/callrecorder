@@ -1,5 +1,6 @@
 package com.example.callrecorder.ui.viewmodel
 
+import android.accounts.AccountManager
 import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
@@ -99,7 +100,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
-                    val drive = GoogleAuthManager(getApplication()).getGoogleDriveService()
+                    val application = getApplication<Application>()
+                    val deviceAccounts = AccountManager.get(application).getAccountsByType("com.google")
+                    if (deviceAccounts.none { it.name.equals(email.trim(), ignoreCase = true) }) {
+                        error("${email.trim()} is not available as a Google account on this phone. Add it under Android Settings > Accounts, then try again.")
+                    }
+                    val drive = GoogleAuthManager(application).getGoogleDriveService()
                         ?: error("No Google account is configured.")
                     drive.about().get().setFields("user(emailAddress)").execute()
                         .user?.emailAddress ?: email
