@@ -42,14 +42,31 @@ class CallRecordService : Service() {
     @Volatile
     private var recordingStopped = false
 
+    /**
+     * False while a pre-opened capture is waiting for the call to connect. If the call is never
+     * answered the file is thrown away, so a ringing phone does not leave recordings behind.
+     */
+    @Volatile
+    private var callConnected = false
+
     private val serviceScope = CoroutineScope(Dispatchers.IO)
 
     companion object {
         const val ACTION_START_RECORDING = "com.example.callrecorder.ACTION_START_RECORDING"
         const val ACTION_STOP_RECORDING = "com.example.callrecorder.ACTION_STOP_RECORDING"
+        /** Opens the microphone while the phone is still ringing (see AppPrefs.recordFromRing). */
+        const val ACTION_PRIME_RECORDING = "com.example.callrecorder.ACTION_PRIME_RECORDING"
         const val EXTRA_PHONE_NUMBER = "extra_phone_number"
         private const val CHANNEL_ID = "call_recording_channel"
         private const val NOTIFICATION_ID = 1001
+
+        /** Warm-up before the amplitude check; encoders emit nothing at first. */
+        private const val WARM_UP_MS = 1200L
+
+        /** Attempts per audio source. The audio HAL is briefly busy when a call connects. */
+        private const val START_ATTEMPTS = 3
+
+        private const val RETRY_DELAY_MS = 400L
     }
 
     override fun onCreate() {
@@ -61,9 +78,13 @@ class CallRecordService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         CallRecorderLog.d("SERVICE", "onStartCommand action=${intent?.action}")
         when (intent?.action) {
+            ACTION_PRIME_RECORDING -> {
+                val phone = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown"
+                primeForCall(phone)
+            }
             ACTION_START_RECORDING -> {
                 val phone = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown"
-                startCallRecording(phone)
+                onCallConnected(phone)
             }
             ACTION_STOP_RECORDING -> {
                 stopCallRecording()
@@ -72,7 +93,39 @@ class CallRecordService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startCallRecording(phoneNumber: String) {
+    /**
+     * Called on RINGING / outgoing dial: start capturing before the telephony stack grabs the mic.
+     * Waiting for OFFHOOK is what produced `RuntimeException: start failed` on this OPPO/ColorOS
+     * build - the microphone was already in use by the call by the time the recorder tried to open it.
+     */
+    private fun primeForCall(phoneNumber: String) {
+        if (isRecording) {
+            CallRecorderLog.d("SERVICE", "pre-open ignored, already capturing for $currentPhoneNumber")
+            return
+        }
+        CallRecorderLog.d("SERVICE", "pre-open for $phoneNumber (waiting for the call to connect)")
+        startCallRecording(phoneNumber, connected = false)
+    }
+
+    /**
+     * Called on OFFHOOK. If a pre-opened capture is running it is kept - restarting the recorder here
+     * would hit exactly the failure this exists to avoid - and the call is simply marked connected.
+     */
+    private fun onCallConnected(phoneNumber: String) {
+        if (isRecording && !callConnected) {
+            callConnected = true
+            startTimestamp = System.currentTimeMillis()
+            CallRecorderLog.d(
+                "SERVICE",
+                "call connected - keeping the pre-opened capture for $phoneNumber (${outputFilePath})"
+            )
+            AppPrefs.setLastRecordingIssue(applicationContext, null)
+            return
+        }
+        startCallRecording(phoneNumber, connected = true)
+    }
+
+    private fun startCallRecording(phoneNumber: String, connected: Boolean) {
         if (isRecording) {
             CallRecorderLog.d("SERVICE", "already recording, ignoring start for $phoneNumber")
             return
@@ -101,6 +154,7 @@ class CallRecordService : Service() {
             return
         }
         recordingStopped = false
+        callConnected = connected
         currentPhoneNumber = phoneNumber
         startTimestamp = System.currentTimeMillis()
 
@@ -141,61 +195,92 @@ class CallRecordService : Service() {
 
         var lastError: Throwable? = null
         val silentSources = mutableListOf<String>()
+        val failedSources = mutableListOf<String>()
+
         for (source in candidates) {
             if (recordingStopped) {
                 CallRecorderLog.d("SERVICE", "call ended during source selection - stopping at $source")
                 return
             }
-            try {
-                startRecorderWith(phoneNumber, source)
-                isRecording = true
-                outputFilePath.let { CallRecorderLog.d("SERVICE", "source=$source started -> $it") }
+            // The audio HAL is often busy for a few hundred milliseconds around the moment a call
+            // connects, which surfaces as a one-off `start failed`. Retrying costs nothing and turns a
+            // lost call into a recorded one.
+            var attempt = 0
+            while (attempt < START_ATTEMPTS) {
+                if (recordingStopped) return
+                try {
+                    startRecorderWith(phoneNumber, source)
+                    isRecording = true
+                    CallRecorderLog.d(
+                        "SERVICE",
+                        "source=${audioSourceName(source)} attempt=${attempt + 1} started -> $outputFilePath"
+                    )
 
-                // Warm-up: encoders emit nothing for the first few hundred milliseconds.
-                Thread.sleep(1200)
-                if (recordingStopped) {
-                    runCatching { mediaRecorder?.stop() }
-                    runCatching { mediaRecorder?.release() }
-                    mediaRecorder = null
+                    // Warm-up: encoders emit nothing for the first few hundred milliseconds.
+                    Thread.sleep(WARM_UP_MS)
+                    if (recordingStopped) {
+                        runCatching { mediaRecorder?.stop() }
+                        runCatching { mediaRecorder?.release() }
+                        mediaRecorder = null
+                        isRecording = false
+                        CallRecorderLog.d("SERVICE", "call ended during warm-up - recorder released")
+                        return
+                    }
+                    val peak = runCatching { mediaRecorder?.maxAmplitude ?: 0 }.getOrDefault(0)
+                    CallRecorderLog.d(
+                        "SERVICE",
+                        "source=${audioSourceName(source)} peak amplitude after warm-up: $peak"
+                    )
+                    if (peak > 0) {
+                        AppPrefs.setLastRecordingIssue(applicationContext, null)
+                        AppPrefs.setAudioSource(applicationContext, audioSourceName(source))
+                        CallRecorderLog.d(
+                            "SERVICE",
+                            "CONFIRMED audio capture with source=$source (peak=$peak)"
+                        )
+                        return
+                    }
+
+                    // Started but deaf: no point retrying the same source.
+                    releaseRecorder()
                     isRecording = false
-                    CallRecorderLog.d("SERVICE", "call ended during warm-up - recorder released")
-                    return
+                    val stale = File(outputFilePath)
+                    CallRecorderLog.w(
+                        "SERVICE",
+                        "source=${audioSourceName(source)} captured SILENCE " +
+                            "(peak=0, ${stale.length()}B) - trying the next source"
+                    )
+                    silentSources += audioSourceName(source)
+                    stale.delete()
+                    break
+                } catch (t: Throwable) {
+                    lastError = t
+                    CallRecorderLog.e(
+                        "SERVICE",
+                        "source=${audioSourceName(source)} attempt=${attempt + 1} failed: $t",
+                        t
+                    )
+                    releaseRecorder()
+                    isRecording = false
+                    attempt++
+                    if (attempt < START_ATTEMPTS) {
+                        Thread.sleep(RETRY_DELAY_MS * attempt)
+                    } else {
+                        failedSources += "${audioSourceName(source)}: ${t.javaClass.simpleName}: ${t.message}"
+                    }
                 }
-                val peak = runCatching { mediaRecorder?.maxAmplitude ?: 0 }.getOrDefault(0)
-                CallRecorderLog.d("SERVICE", "source=$source peak amplitude after warm-up: $peak")
-                if (peak > 0) {
-                    AppPrefs.setLastRecordingIssue(applicationContext, null)
-                    AppPrefs.setAudioSource(applicationContext, audioSourceName(source))
-                    CallRecorderLog.d("SERVICE", "CONFIRMED audio capture with source=$source (peak=$peak)")
-                    return
-                }
-
-                // Started but deaf. Keep the bytes only if every other source fails too.
-                releaseRecorder()
-                isRecording = false
-                val stale = File(outputFilePath)
-                CallRecorderLog.w(
-                    "SERVICE",
-                    "source=$source captured SILENCE (peak=0, ${stale.length()}B) - trying the next source"
-                )
-                silentSources += audioSourceName(source)
-                stale.delete()
-            } catch (t: Throwable) {
-                lastError = t
-                CallRecorderLog.e("SERVICE", "recorder failed with source=$source", t)
-                releaseRecorder()
-                isRecording = false
             }
         }
 
         val detail = when {
-            silentSources.isNotEmpty() && lastError == null ->
+            silentSources.isNotEmpty() ->
                 "Every audio source started but captured silence (${silentSources.joinToString()}). " +
                     "This Android build (API ${Build.VERSION.SDK_INT}) does not allow third-party apps " +
-                    "to record call audio. Use the speakerphone setting, or record only your side."
+                    "to record call audio. Speakerphone may still work for the other side."
             else ->
                 "Recorder could not start (${lastError?.javaClass?.simpleName}: ${lastError?.message}). " +
-                    "Close other apps that use the microphone and check the Microphone permission."
+                    "Tried ${failedSources.joinToString()}. On ColorOS/MIUI/EMUI the call app can hold " +
+                    "the microphone for the whole call, in which case no third-party app can record it."
         }
         RecordingStorage.reportRecordingIssue(applicationContext, detail)
         CallRecorderLog.e("SERVICE", detail, lastError)
@@ -226,6 +311,14 @@ class CallRecordService : Service() {
             setAudioEncodingBitRate(128000)
             setAudioSamplingRate(44100)
             setOutputFile(outputFilePath)
+            // MediaRecorder reports some failures only through this callback; without it the reason
+            // for a silent or truncated recording is lost.
+            setOnErrorListener { _, what, extra ->
+                CallRecorderLog.e(
+                    "SERVICE",
+                    "MediaRecorder error what=$what extra=$extra (source=$audioSource)"
+                )
+            }
             prepare()
             start()
         }
@@ -257,6 +350,17 @@ class CallRecordService : Service() {
             isRecording = false
 
             val produced = File(outputFilePath)
+
+            if (!callConnected) {
+                // Pre-opened for a call that never connected (unanswered or rejected): throw it away.
+                CallRecorderLog.d(
+                    "SERVICE",
+                    "call never connected - discarding pre-opened capture (${produced.length()}B)"
+                )
+                runCatching { produced.delete() }
+                RecordingStorage.reportRecordingIssue(applicationContext, null)
+                return
+            }
             CallRecorderLog.d(
                 "SERVICE",
                 "stopping: file=${produced.name} exists=${produced.exists()} bytes=${produced.length()}"

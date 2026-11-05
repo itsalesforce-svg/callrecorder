@@ -42,6 +42,8 @@ enum class DriveLinkState {
 
 data class SettingsUiState(
     val autoRecord: Boolean = true,
+    /** Open the microphone while the phone rings; see AppPrefs.recordFromRing. */
+    val recordFromRing: Boolean = true,
     val audioSource: String = "VOICE_COMMUNICATION",
     val autoSync: Boolean = true,
     val syncWifiOnly: Boolean = true,
@@ -143,6 +145,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 _uiState.update {
                     it.copy(
                         autoRecord = AppPrefs.autoRecord(ctx),
+                        recordFromRing = AppPrefs.recordFromRing(ctx),
                         audioSource = AppPrefs.audioSource(ctx),
                         autoSync = AppPrefs.autoSync(ctx),
                         syncWifiOnly = AppPrefs.syncWifiOnly(ctx),
@@ -548,6 +551,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             withContext(Dispatchers.IO) { AppPrefs.setAutoRecord(getApplication(), enabled) }
             _uiState.update { it.copy(autoRecord = enabled) }
+        }
+    }
+
+    fun setRecordFromRing(enabled: Boolean) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { AppPrefs.setRecordFromRing(getApplication(), enabled) }
+            _uiState.update { it.copy(recordFromRing = enabled) }
         }
     }
 

@@ -402,6 +402,15 @@ fun SettingsScreen(
                         onCheckedChange = viewModel::setAutoRecord
                     )
                     HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    PreferenceSwitch(
+                        title = "Open the microphone while ringing",
+                        description = "On ColorOS, MIUI and EMUI the call app owns the microphone as soon " +
+                            "as the call connects, so recording fails with 'start failed'. Opening it " +
+                            "while the phone rings avoids that; an unanswered call is discarded.",
+                        checked = state.recordFromRing,
+                        onCheckedChange = viewModel::setRecordFromRing
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
                     Text("Call audio source", style = MaterialTheme.typography.bodyLarge)
                     Text(
                         "Android blocks call-audio capture for third-party apps on most devices. " +

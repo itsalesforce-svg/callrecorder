@@ -26,6 +26,7 @@ object AppPrefs {
     private const val KEY_ACCOUNT_SYNTHETIC = "google_account_synthetic"
     private const val KEY_AUTO_RECORD = "auto_record"
     private const val KEY_AUDIO_SOURCE = "audio_source"
+    private const val KEY_RECORD_FROM_RING = "record_from_ring"
     private const val KEY_AUTO_SYNC = "auto_sync"
     private const val KEY_SYNC_WIFI_ONLY = "sync_wifi_only"
     private const val KEY_SYNC_INTERVAL_HOURS = "sync_interval_hours"
@@ -167,6 +168,21 @@ object AppPrefs {
      * service now *verifies* audio with `getMaxAmplitude()` and promotes whichever source actually
      * produced sound (see CallRecordService.startRecorderWithFallback).
      */
+    /**
+     * Open the microphone as soon as the phone rings, instead of waiting for the call to connect.
+     *
+     * On several Android 9 vendor builds (ColorOS, MIUI, EMUI) the microphone is already owned by the
+     * telephony stack by the time OFFHOOK arrives, so `MediaRecorder.start()` throws
+     * `RuntimeException: start failed` and the call is lost. Opening the recorder during RINGING -
+     * while the mic is still free - and holding it through the call is the standard workaround. The
+     * capture is discarded if the call is never answered.
+     */
+    fun recordFromRing(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_RECORD_FROM_RING, true)
+
+    fun setRecordFromRing(context: Context, value: Boolean) =
+        prefs(context).edit().putBoolean(KEY_RECORD_FROM_RING, value).apply()
+
     fun audioSource(context: Context): String =
         prefs(context).getString(KEY_AUDIO_SOURCE, "MIC") ?: "MIC"
 

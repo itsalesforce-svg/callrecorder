@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.telephony.TelephonyManager
+import com.example.callrecorder.auth.AppPrefs
 import com.example.callrecorder.debug.CallRecorderLog
 import com.example.callrecorder.service.CallRecordService
 
@@ -21,6 +22,17 @@ import com.example.callrecorder.service.CallRecordService
 class CallStateReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        // Outgoing calls never produce RINGING, so the equivalent "the microphone is still free"
+        // moment is the dial broadcast. Deprecated in API 29 but functional on the Android 9 builds
+        // that need the pre-open; the service also retries at OFFHOOK, so nothing depends on it.
+        if (intent.action == Intent.ACTION_NEW_OUTGOING_CALL) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                val dialed = intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER).orEmpty()
+                CallRecorderLog.d("CALLS", "NEW_OUTGOING_CALL number=$dialed")
+                prime(context, dialed.ifBlank { "Unknown" })
+            }
+            return
+        }
         if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
 
         val stateStr = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
@@ -28,6 +40,11 @@ class CallStateReceiver : BroadcastReceiver() {
         CallRecorderLog.d("CALLS", "PHONE_STATE=$stateStr number=$phoneNumber SDK=${Build.VERSION.SDK_INT}")
 
         when (stateStr) {
+            TelephonyManager.EXTRA_STATE_RINGING -> {
+                // Open the recorder now, while the telephony stack has not taken the microphone yet.
+                prime(context, phoneNumber)
+            }
+
             TelephonyManager.EXTRA_STATE_OFFHOOK -> {
                 // Call answered or outgoing call connected.
                 val serviceIntent = Intent(context, CallRecordService::class.java).apply {
@@ -55,6 +72,24 @@ class CallStateReceiver : BroadcastReceiver() {
                     CallRecorderLog.e("CALLS", "could not deliver the stop request", t)
                 }
             }
+        }
+    }
+
+    /** Starts the service early so the microphone is already open when the call connects. */
+    private fun prime(context: Context, number: String) {
+        if (!AppPrefs.recordFromRing(context)) {
+            CallRecorderLog.d("CALLS", "pre-open at ring is disabled - waiting for OFFHOOK")
+            return
+        }
+        val serviceIntent = Intent(context, CallRecordService::class.java).apply {
+            action = CallRecordService.ACTION_PRIME_RECORDING
+            putExtra(CallRecordService.EXTRA_PHONE_NUMBER, number)
+        }
+        try {
+            context.startForegroundService(serviceIntent)
+            CallRecorderLog.d("CALLS", "pre-open requested for $number")
+        } catch (t: Throwable) {
+            CallRecorderLog.e("CALLS", "could not pre-open the recorder", t)
         }
     }
 
