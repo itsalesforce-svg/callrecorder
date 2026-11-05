@@ -299,3 +299,27 @@ chooser — that is expected, not a regression. It also matters here for a secon
 with a **different** key cannot install over the old one, so Android forces an uninstall, and the pick
 is lost with it. Once an APK is built from the pinned keystore (`69:D8:18:E2:...`), later builds install
 over the top and keep both the data and the visibility grant.
+
+## Voice recorder: meetings, podcasts, voice notes
+
+There is a second, independent recorder for everything that is not a phone call. It is reached from
+the **microphone icon in the top bar** of the home screen, and it depends on neither the telephony
+stack nor OEM in-call microphone policy - which is precisely why it works while in-call capture may
+not.
+
+- **Categories**: Meeting, Podcast, Voice note. The choice goes into the library row *and* the file
+  name (`VOICE_MEETING_2026-11-05_23-45-12.m4a`), so the recording is still identifiable in a file
+  manager and in Drive.
+- **Live timer** (mm:ss, or h:mm:ss for a long meeting) and a single record/stop button.
+- **Foreground service** with an ongoing notification that has its own *Stop* action, so a 90 minute
+  meeting keeps recording with the screen off.
+- **Same library**: the row is written to `call_records` with `callType` = `MEETING` / `PODCAST` /
+  `VOICE_NOTE`, so the recording appears on the home screen immediately, plays with the existing
+  player, deletes with the existing action and is picked up by the same Drive upload worker (which
+  names the remote file from the label because there is no phone number).
+- **Nothing is silent**: missing microphone permission, a recorder that will not start, a clip too
+  short to contain a frame, and a failed library write each produce a specific message on the screen
+  and a line in the debug log.
+
+Voice recordings stay **Local only** until the `UnregisteredOnApiConsole` gate above is cleared - the
+token is what the upload needs. They are playable and permanently stored regardless.
