@@ -13,6 +13,8 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.callrecorder.MainActivity
 import com.example.callrecorder.R
+import com.example.callrecorder.auth.AppPrefs
+import com.example.callrecorder.data.RecordingStorage
 import com.example.callrecorder.data.local.AppDatabase
 import com.example.callrecorder.data.local.CallRecordEntity
 import com.example.callrecorder.worker.SyncScheduler
@@ -20,8 +22,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 class CallRecordService : Service() {
@@ -62,6 +62,11 @@ class CallRecordService : Service() {
 
     private fun startCallRecording(phoneNumber: String) {
         if (isRecording) return
+        if (!AppPrefs.autoRecord(applicationContext)) {
+            // The "Automatic Call Recording" switch on the Settings screen must actually gate work.
+            stopSelf()
+            return
+        }
         currentPhoneNumber = phoneNumber
         startTimestamp = System.currentTimeMillis()
 
@@ -76,35 +81,63 @@ class CallRecordService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        try {
-            val storageDir = File(getExternalFilesDir(null), "CallRecordings").apply {
-                if (!exists()) mkdirs()
+        // Android 10+ blocks third-party apps from capturing the call stream for most devices, so a
+        // hard-coded VOICE_COMMUNICATION silently produced nothing. Try the configured source, then
+        // fall back to the microphone, and tell the user in Settings if both fail.
+        val preferred = audioSourceFromString(AppPrefs.audioSource(applicationContext))
+        var lastError: Throwable? = null
+        for (source in listOf(preferred, MediaRecorder.AudioSource.MIC).distinct()) {
+            try {
+                startRecorderWith(phoneNumber, source)
+                isRecording = true
+                AppPrefs.setLastRecordingIssue(applicationContext, null)
+                return
+            } catch (t: Throwable) {
+                lastError = t
+                releaseRecorder()
             }
-            val timeStampStr = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val audioFile = File(storageDir, "CALL_${phoneNumber}_${timeStampStr}.m4a")
-            outputFilePath = audioFile.absolutePath
-
-            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(this)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }.apply {
-                setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioEncodingBitRate(128000)
-                setAudioSamplingRate(44100)
-                setOutputFile(outputFilePath)
-                prepare()
-                start()
-            }
-
-            isRecording = true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            stopSelf()
         }
+        RecordingStorage.reportRecordingIssue(
+            applicationContext,
+            "Recorder could not start (${lastError?.javaClass?.simpleName}: ${lastError?.message}). " +
+                "Pick another audio source in Settings, close other mic-using apps, and check the " +
+                "Microphone permission."
+        )
+        stopSelf()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startRecorderWith(phoneNumber: String, audioSource: Int) {
+        val audioFile = RecordingStorage.fileFor(applicationContext, phoneNumber, startTimestamp)
+        outputFilePath = audioFile.absolutePath
+
+        mediaRecorder = (
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(this)
+            else MediaRecorder()
+            ).apply {
+            setAudioSource(audioSource)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setAudioEncodingBitRate(128000)
+            setAudioSamplingRate(44100)
+            setOutputFile(outputFilePath)
+            prepare()
+            start()
+        }
+    }
+
+    private fun audioSourceFromString(name: String): Int = when (name.trim().uppercase(Locale.US)) {
+        "MIC" -> MediaRecorder.AudioSource.MIC
+        "CAMCORDER" -> MediaRecorder.AudioSource.CAMCORDER
+        "VOICE_RECOGNITION" -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+        "VOICE_CALL" -> MediaRecorder.AudioSource.VOICE_CALL
+        else -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+    }
+
+    private fun releaseRecorder() {
+        runCatching { mediaRecorder?.stop() }
+        runCatching { mediaRecorder?.release() }
+        mediaRecorder = null
     }
 
     private fun stopCallRecording() {
@@ -114,12 +147,20 @@ class CallRecordService : Service() {
         }
 
         try {
-            mediaRecorder?.apply {
-                stop()
-                release()
-            }
-            mediaRecorder = null
+            releaseRecorder()
             isRecording = false
+
+            val produced = File(outputFilePath)
+            if (!produced.exists() || produced.length() == 0L) {
+                RecordingStorage.reportRecordingIssue(
+                    applicationContext,
+                    "The recording finished but the file is empty. This Android version does not let " +
+                        "third-party apps capture call audio - switch the audio source to MIC in " +
+                        "Settings (only your side of the conversation will be audible)."
+                )
+                produced.delete()
+                return
+            }
 
             val durationSeconds = (System.currentTimeMillis() - startTimestamp) / 1000
 

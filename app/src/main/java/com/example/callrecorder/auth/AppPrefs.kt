@@ -35,6 +35,7 @@ object AppPrefs {
     private const val KEY_LAST_SYNC_FAILED = "last_sync_failed"
     private const val KEY_LAST_SYNC_MESSAGE = "last_sync_message"
     private const val KEY_LAST_SYNC_STATE = "last_sync_state"
+    private const val KEY_LAST_RECORDING_ISSUE = "last_call_recording_issue"
     private const val KEY_DRIVE_FOLDER_ID = "drive_folder_id"
     private const val KEY_MIGRATED = "prefs_migrated_v2"
 
@@ -75,6 +76,14 @@ object AppPrefs {
             }
             if (legacy.contains(KEY_SYNC_INTERVAL_HOURS)) {
                 editor.putLong(KEY_SYNC_INTERVAL_HOURS, legacy.getLong(KEY_SYNC_INTERVAL_HOURS, 4L))
+            }
+            // Older builds called this "auto_sync_enabled" and kept the recording issue here.
+            if (legacy.contains("auto_sync_enabled")) {
+                editor.putBoolean(KEY_AUTO_SYNC, legacy.getBoolean("auto_sync_enabled", true))
+            }
+            if (legacy.contains(KEY_LAST_RECORDING_ISSUE)) {
+                legacy.getString(KEY_LAST_RECORDING_ISSUE, null)
+                    ?.let { editor.putString(KEY_LAST_RECORDING_ISSUE, it) }
             }
             // Only carry the old account over when the user actually saved one. The legacy screen
             // returned "itsalesforce@gmail.com" as a *default* even when nothing was ever saved,
@@ -142,6 +151,18 @@ object AppPrefs {
     fun setAudioSource(context: Context, value: String) =
         prefs(context).edit().putString(KEY_AUDIO_SOURCE, value).apply()
 
+    /** Why the last recording attempt failed (shown on the Settings screen), null = all good. */
+    fun lastRecordingIssue(context: Context): String? =
+        prefs(context).getString(KEY_LAST_RECORDING_ISSUE, null)
+
+    fun setLastRecordingIssue(context: Context, issue: String?) {
+        prefs(context).edit().apply {
+            if (issue.isNullOrBlank()) remove(KEY_LAST_RECORDING_ISSUE)
+            else putString(KEY_LAST_RECORDING_ISSUE, issue)
+        }.apply()
+    }
+
+    /** Auto-sync (background upload) on/off. Default true so a fresh install actually syncs. */
     fun autoSync(context: Context): Boolean = prefs(context).getBoolean(KEY_AUTO_SYNC, true)
 
     fun setAutoSync(context: Context, value: Boolean) =

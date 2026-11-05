@@ -12,6 +12,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Dangerous (runtime) permission since Android 6.0: without it
+         AccountManager.getAccountsByType("com.google") returns an empty array, which is what made
+         GoogleAccountCredential resolve the saved address to null. Requested from Settings >
+         "Grant accounts permission" (see ui/screens/SettingsScreen.kt). -->
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
 
     <application

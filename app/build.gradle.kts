@@ -84,6 +84,12 @@ dependencies {
     implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0")
     implementation("com.google.api-client:google-api-client-android:2.2.0")
     implementation("com.google.http-client:google-http-client-gson:1.43.3")
+    // REQUIRED: google-api-client-android declares Play services as a `provided` (Maven) /
+    // compileOnly dependency, so GoogleAuthUtil, UserRecoverableAuthException and AccountPicker are
+    // NOT on the runtime classpath unless the app asks for them. Without this line every token
+    // request dies with NoClassDefFoundError: com.google.android.gms.auth.GoogleAuthUtil, and any
+    // `import com.google.android.gms.*` in the app does not even compile.
+    implementation("com.google.android.gms:play-services-auth:21.3.0")
 
     // Core AndroidX
     implementation("androidx.core:core-ktx:1.13.1")

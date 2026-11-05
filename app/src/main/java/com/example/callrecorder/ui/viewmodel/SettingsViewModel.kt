@@ -14,8 +14,11 @@ import com.example.callrecorder.worker.SyncScheduler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -53,6 +56,8 @@ data class SettingsUiState(
     val busy: Boolean = false,
     val showAccountPicker: Boolean = false,
     val consentIntent: Intent? = null,
+    val syncMessage: String? = null,
+    val callRecordingIssue: String? = null,
     val lastSyncSummary: String? = null
 )
 
@@ -65,8 +70,23 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
+    /**
+     * One-shot emissions of Google's consent/re-auth prompt. The screen launches these with an
+     * Activity result launcher and re-runs the test when the user comes back. A SharedFlow (not a
+     * field in the state) is used so a recomposition cannot launch the same prompt twice.
+     */
+    private val _driveAuthorizationRequests = MutableSharedFlow<Intent>(extraBufferCapacity = 1)
+    val driveAuthorizationRequests: SharedFlow<Intent> = _driveAuthorizationRequests.asSharedFlow()
+
     init {
         refresh()
+    }
+
+    /** Re-read the recording failure note written by CallRecordService. */
+    fun refreshCallRecordingIssue() {
+        _uiState.update {
+            it.copy(callRecordingIssue = AppPrefs.lastRecordingIssue(getApplication()))
+        }
     }
 
     /**
@@ -108,6 +128,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         linkState = linkState,
                         headline = headlineFor(linkState, saved, permission, accounts.size),
                         detail = blockerDetail(permission, accounts.size, total, saved),
+                        callRecordingIssue = AppPrefs.lastRecordingIssue(ctx),
                         lastSyncSummary = syncSummary()
                     )
                 }
@@ -253,9 +274,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     /** Intent for the Play services account chooser, or null when this build cannot offer it. */
     fun systemChooserIntent(): Intent? = runCatching { authManager.chooseAccountIntent() }.getOrNull()
 
-    /** Handle the extra the chooser returns (AccountPicker.KEY_SELECTED_ACCOUNT). */
+    /**
+     * Handle the chooser result. Play services' AccountPicker answers with `selected_account`,
+     * while the framework's AccountManager chooser answers with `account_name`; accept either so a
+     * picked account is never silently dropped (that is what made the picker "return null").
+     */
     fun onSystemChooserResult(data: Intent?) {
-        val picked = data?.extras?.getString(GoogleAccountRepository.PICKER_SELECTED_ACCOUNT_EXTRA)
+        val extras = data?.extras
+        val picked = extras?.getString(GoogleAccountRepository.PICKER_SELECTED_ACCOUNT_EXTRA)
+            ?: extras?.getString(AccountManager.KEY_ACCOUNT_NAME)
         if (picked.isNullOrBlank()) {
             _uiState.update {
                 it.copy(
@@ -330,7 +357,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             _uiState.update {
                 it.copy(
                     busy = false,
-                    linkState = if (report.ok) DriveLinkState.READY else DriveLinkState.FAILED,
+                    linkState = when {
+                        report.ok -> DriveLinkState.READY
+                        report.consentIntent != null -> DriveLinkState.CONSENT_PENDING
+                        else -> DriveLinkState.FAILED
+                    },
                     headline = report.headline,
                     detail = if (report.ok) null else report.failedStep?.detail,
                     steps = report.steps,
@@ -338,6 +369,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     lastSyncSummary = syncSummary()
                 )
             }
+            report.consentIntent?.let { _driveAuthorizationRequests.emit(it) }
         }
     }
 
@@ -350,12 +382,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun syncNow() {
         viewModelScope.launch {
             val ctx = getApplication<Application>()
+            if (AppPrefs.accountName(ctx).isNullOrBlank()) {
+                _uiState.update {
+                    it.copy(syncMessage = "Link a Google account before syncing - there is nowhere to upload to yet.")
+                }
+                return@launch
+            }
             withContext(Dispatchers.IO) { SyncScheduler.scheduleImmediateSync(ctx) }
             _uiState.update {
                 it.copy(
                     linkState = DriveLinkState.TESTING,
-                    headline = "Upload queued — the next sync will run now",
-                    detail = null
+                    headline = "Upload queued - the sync is running now",
+                    detail = null,
+                    syncMessage = null
                 )
             }
             delay(3_000)
