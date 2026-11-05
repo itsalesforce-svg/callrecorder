@@ -77,7 +77,7 @@ fun CallRecordScreen(
                     Column {
                         Text("Recorder", fontWeight = FontWeight.Bold)
                         Text(
-                            if (selectedTab == RecordingTab.CALLS) "Your call recordings" else "Meetings, podcasts & more",
+                            "Phone calls + meetings",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -105,7 +105,7 @@ fun CallRecordScreen(
                         viewModel.updateSearchQuery("")
                     },
                     icon = { Icon(Icons.Default.Call, contentDescription = null) },
-                    label = { Text("Calls") }
+                    label = { Text("Phone calls") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == RecordingTab.VOICE,
@@ -114,7 +114,7 @@ fun CallRecordScreen(
                         viewModel.updateSearchQuery("")
                     },
                     icon = { Icon(Icons.Default.Mic, contentDescription = null) },
-                    label = { Text("Voice recorder") }
+                    label = { Text("Meetings") }
                 )
             }
         }
@@ -138,6 +138,23 @@ fun CallRecordScreen(
                     onStop = { viewModel.stopVoiceRecording() }
                 )
             } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Call, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("Phone call recordings", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("Your incoming and outgoing call recordings appear here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { viewModel.updateSearchQuery(it) },
@@ -233,7 +250,7 @@ private fun VoiceRecorderPanel(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        if (isRecording) "RECORDING IN PROGRESS" else "VOICE RECORDER",
+                        if (isRecording) "RECORDING IN PROGRESS" else "MEETING & PODCAST RECORDER",
                         style = MaterialTheme.typography.labelMedium,
                         color = Color(0xFFFFC2D1),
                         fontWeight = FontWeight.Bold
@@ -277,21 +294,19 @@ private fun VoiceRecorderPanel(
                     Text("Stop and save recording", fontWeight = FontWeight.Bold)
                 }
             } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text("Ready when you are", style = MaterialTheme.typography.titleSmall, color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text("Saved privately on this device", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .72f))
-                    }
-                    FilledIconButton(
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text("Ready to record your session?", style = MaterialTheme.typography.titleSmall, color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Saved on this device and ready to play back.", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .72f))
+                    Spacer(Modifier.height(14.dp))
+                    Button(
                         onClick = onStart,
-                        modifier = Modifier.size(62.dp),
-                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFFF486C), contentColor = Color.White)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF486C), contentColor = Color.White),
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.Mic, contentDescription = "Start voice recording", modifier = Modifier.size(28.dp))
+                        Icon(Icons.Default.Mic, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Record a meeting or podcast", fontWeight = FontWeight.Bold)
                     }
                 }
             }
