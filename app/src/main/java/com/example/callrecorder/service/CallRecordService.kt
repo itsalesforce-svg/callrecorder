@@ -47,7 +47,7 @@ class CallRecordService : Service() {
         const val ACTION_START_VOICE_RECORDING = "com.example.callrecorder.ACTION_START_VOICE_RECORDING"
         const val EXTRA_RECORDING_TITLE = "extra_recording_title"
         const val EXTRA_RECORDING_CATEGORY = "extra_recording_category"
-        private const val CHANNEL_ID = "call_recording_channel"
+        private const val CHANNEL_ID = "recording_channel_v2"
         private const val NOTIFICATION_ID = 1001
     }
 
@@ -234,6 +234,8 @@ class CallRecordService : Service() {
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .setSilent(true)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -246,7 +248,8 @@ class CallRecordService : Service() {
                 "Call Recording Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Shows ongoing notification when a phone call is recorded"
+                description = "Quiet recording status. Android may still show its microphone privacy indicator while recording."
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
