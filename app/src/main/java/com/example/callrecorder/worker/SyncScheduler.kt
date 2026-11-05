@@ -43,8 +43,12 @@ object SyncScheduler {
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             PERIODIC_SYNC_WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
+            ExistingPeriodicWorkPolicy.UPDATE,
             periodicRequest
         )
+    }
+
+    fun cancelPeriodicSync(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_SYNC_WORK_NAME)
     }
 }

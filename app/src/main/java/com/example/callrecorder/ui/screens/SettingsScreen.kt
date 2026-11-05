@@ -1,7 +1,11 @@
 package com.example.callrecorder.ui.screens
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -10,7 +14,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.example.callrecorder.data.RecordingStorage
 import com.example.callrecorder.ui.viewmodel.SettingsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -20,6 +26,23 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsState()
+    LaunchedEffect(Unit) { viewModel.refreshCallRecordingIssue() }
+    val context = LocalContext.current
+    val storagePath = remember(context) { RecordingStorage.directory(context).absolutePath }
+    val driveAuthorizationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) viewModel.testDriveConnection()
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.driveAuthorizationRequests.collect { authorizationIntent ->
+            driveAuthorizationLauncher.launch(authorizationIntent)
+        }
+    }
+    var accountEmailDraft by remember(state.googleAccountName) {
+        mutableStateOf(state.googleAccountName ?: "itsalesforce@gmail.com")
+    }
+    var accountMessage by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -40,94 +63,189 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            Text(
-                "Recording Preferences",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
+            Text("Recording Preferences", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Automatic Call Recording", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "Automatically record telephony calls via Foreground Service",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                        Switch(
-                            checked = state.autoRecord,
-                            onCheckedChange = { viewModel.setAutoRecord(it) }
-                        )
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                    Text("Audio Source", style = MaterialTheme.typography.bodyLarge)
+                    PreferenceSwitch(
+                        title = "Automatic Call Recording",
+                        description = "Start a recording when a call connects (device support varies).",
+                        checked = state.autoRecord,
+                        onCheckedChange = viewModel::setAutoRecord
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    Text("Call audio source", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        state.audioSource,
+                        "${state.audioSource} · Android and carrier restrictions may limit call audio capture.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    state.callRecordingIssue?.let { issue ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(issue, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Text("Recording Storage", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Phone calls and meetings are saved in this folder", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    SelectionContainer {
+                        Text(storagePath, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "This is app-specific storage. Android may hide Android/data folders in some file managers; uninstalling the app can remove these files.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                "Google Drive Cloud Sync",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
+            Spacer(Modifier.height(20.dp))
+            Text("Google Drive Sync", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
+                    Text("Google account", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        state.googleAccountName ?: "No account selected",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (state.googleAccountName == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Enter the Gmail address already added to this phone. This avoids opening the system account chooser, which was closing the app on some devices.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = accountEmailDraft,
+                        onValueChange = { accountEmailDraft = it.trim() },
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        label = { Text("Google account email") },
+                        placeholder = { Text("name@gmail.com") },
+                        singleLine = true
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            val email = accountEmailDraft.trim()
+                            if (email.contains('@')) {
+                                viewModel.setGoogleAccountName(email)
+                                accountMessage = "Account saved. Tap Test Drive connection to verify access."
+                            } else {
+                                accountMessage = "Enter a valid Google account email."
+                            }
+                        },
+                        enabled = accountEmailDraft.contains('@'),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column {
-                            Text("Linked Account", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                state.googleAccountName ?: "Not signed in",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                        Icon(Icons.Default.AccountCircle, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Save Google account")
+                    }
+                    accountMessage?.let { message ->
+                        Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = viewModel::testDriveConnection,
+                        enabled = !state.googleAccountName.isNullOrBlank() && !state.isDriveTestRunning,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (state.isDriveTestRunning) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        } else {
+                            Icon(Icons.Default.CloudSync, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
                         }
-                        Icon(Icons.Default.CloudDone, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text(if (state.isDriveTestRunning) "Testing Drive connection…" else "Test Drive connection")
+                    }
+                    val connectionColor = when (state.driveConnected) {
+                        true -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                        false -> MaterialTheme.colorScheme.error
+                        null -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = when (state.driveConnected) {
+                                true -> Icons.Default.CheckCircle
+                                false -> Icons.Default.Error
+                                null -> Icons.Default.HelpOutline
+                            },
+                            contentDescription = null,
+                            tint = connectionColor
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            state.driveConnectionMessage ?: "Drive connection has not been tested.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = connectionColor
+                        )
                     }
 
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    PreferenceSwitch(
+                        title = "Automatic sync",
+                        description = "Upload new recordings and retry pending uploads in the background.",
+                        checked = state.autoSyncEnabled,
+                        onCheckedChange = viewModel::setAutoSyncEnabled
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    PreferenceSwitch(
+                        title = "Sync over Wi-Fi only",
+                        description = "When off, sync can use any available network.",
+                        checked = state.syncWifiOnly,
+                        onCheckedChange = viewModel::setSyncWifiOnly
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = { viewModel.syncNow() },
+                        enabled = !state.googleAccountName.isNullOrBlank(),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Sync Over Wi-Fi Only", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "Conserves mobile cellular data when uploading to Drive",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                        Switch(
-                            checked = state.syncWifiOnly,
-                            onCheckedChange = { viewModel.setSyncWifiOnly(it) }
-                        )
+                        Icon(Icons.Default.CloudSync, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Sync now")
+                    }
+                    state.syncMessage?.let { message ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PreferenceSwitch(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

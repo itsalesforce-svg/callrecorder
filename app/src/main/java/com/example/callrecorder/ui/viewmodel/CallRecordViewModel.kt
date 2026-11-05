@@ -1,7 +1,10 @@
 package com.example.callrecorder.ui.viewmodel
 
 import android.app.Application
+import android.content.Intent
 import android.media.MediaPlayer
+import androidx.core.content.ContextCompat
+import com.example.callrecorder.service.CallRecordService
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.callrecorder.data.local.AppDatabase
@@ -27,6 +30,9 @@ class CallRecordViewModel(application: Application) : AndroidViewModel(applicati
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
     private var mediaPlayer: MediaPlayer? = null
+
+    private val _voiceRecordingStartedAt = MutableStateFlow<Long?>(null)
+    val voiceRecordingStartedAt: StateFlow<Long?> = _voiceRecordingStartedAt.asStateFlow()
 
     init {
         val dao = AppDatabase.getDatabase(application).callRecordDao()
@@ -81,8 +87,38 @@ class CallRecordViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun startVoiceRecording(title: String, category: String) {
+        val intent = Intent(getApplication(), CallRecordService::class.java).apply {
+            action = CallRecordService.ACTION_START_VOICE_RECORDING
+            putExtra(CallRecordService.EXTRA_RECORDING_TITLE, title)
+            putExtra(CallRecordService.EXTRA_RECORDING_CATEGORY, category)
+        }
+        try {
+            val application = getApplication<Application>()
+            ContextCompat.startForegroundService(application, intent)
+            _voiceRecordingStartedAt.value = System.currentTimeMillis()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            _voiceRecordingStartedAt.value = null
+        }
+    }
+
+    fun stopVoiceRecording() {
+        val intent = Intent(getApplication(), CallRecordService::class.java).apply {
+            action = CallRecordService.ACTION_STOP_RECORDING
+        }
+        getApplication<Application>().startService(intent)
+        _voiceRecordingStartedAt.value = null
+    }
+
     fun triggerCloudSync() {
-        SyncScheduler.scheduleImmediateSync(getApplication())
+        val context = getApplication<Application>()
+        val account = context.getSharedPreferences("call_recorder_prefs", android.content.Context.MODE_PRIVATE)
+            .getString("google_account_name", null)
+        if (account.isNullOrBlank()) return
+        val requireWifi = context.getSharedPreferences("call_recorder_settings", android.content.Context.MODE_PRIVATE)
+            .getBoolean("sync_wifi_only", true)
+        SyncScheduler.scheduleImmediateSync(context, requireWifi = requireWifi)
     }
 
     override fun onCleared() {

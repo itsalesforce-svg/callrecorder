@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.callrecorder"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 12
+        versionName = "2.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -83,6 +83,8 @@ dependencies {
     // Google Drive REST API v3 (Specification Section 5: v3-rev20220815)
     implementation("com.google.apis:google-api-services-drive:v3-rev20220815-2.0.0")
     implementation("com.google.api-client:google-api-client-android:2.2.0")
+    // GoogleAccountCredential resolves GoogleAuthUtil from Play Services Auth at runtime.
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
     implementation("com.google.http-client:google-http-client-gson:1.43.3")
 
     // Core AndroidX
