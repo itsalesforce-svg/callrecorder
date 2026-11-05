@@ -2,6 +2,8 @@ package com.example.callrecorder.auth
 
 import android.content.Context
 import android.content.Intent
+import com.example.callrecorder.debug.AppSigning
+import com.example.callrecorder.debug.CallRecorderLog
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import com.google.api.client.http.javanet.NetHttpTransport
@@ -31,6 +33,17 @@ class GoogleAuthManager(private val context: Context) {
 
         /** Human-readable summary of the scope, used in the UI. */
         const val SCOPE_LABEL = "https://www.googleapis.com/auth/drive.file"
+
+        /**
+         * Logs the values Google Cloud Console needs for the (implicit) Android OAuth client.
+         * `UnregisteredOnApiConsole` means this pair is not registered in the Cloud project.
+         */
+        fun logSigningIdentity(context: Context) {
+            CallRecorderLog.d(
+                "AUTH",
+                "OAuth Android client needs package=${context.packageName} sha1=${AppSigning.sha1(context)}"
+            )
+        }
     }
 
     /** Why we could not build a Drive client, if that is the case. */
@@ -59,6 +72,7 @@ class GoogleAuthManager(private val context: Context) {
 
     fun credentialResult(): CredentialResult {
         val saved = AppPrefs.accountName(context)
+        CallRecorderLog.d("AUTH", "credentialResult: saved=$saved synthetic=${AppPrefs.accountIsSynthetic(context)}")
         if (saved == null) {
             return CredentialResult.Problem(
                 kind = CredentialResult.Problem.Kind.NO_ACCOUNT_SAVED,
@@ -69,13 +83,23 @@ class GoogleAuthManager(private val context: Context) {
         }
 
         return when (val resolution = repository.resolve(saved)) {
-            is GoogleAccountRepository.Resolution.Exact ->
+            is GoogleAccountRepository.Resolution.Exact -> {
+                CallRecorderLog.d("AUTH", "resolve=$saved -> EXACT device account ${resolution.account.name} (${resolution.account.type})")
                 CredentialResult.Ready(buildCredential(resolution.account), resolution.account.name, false)
+            }
 
-            is GoogleAccountRepository.Resolution.Synthetic ->
+            is GoogleAccountRepository.Resolution.Synthetic -> {
+                CallRecorderLog.w(
+                    "AUTH",
+                    "resolve=$saved -> SYNTHETIC. AccountManager returned no accounts, so a fabricated " +
+                        "Account($saved, com.google) is passed to GoogleAuthUtil. If the token step fails " +
+                        "with UnregisteredOnApiConsole the app's SHA-1 is missing in Cloud Console."
+                )
                 CredentialResult.Ready(buildCredential(resolution.account), resolution.account.name, true)
+            }
 
-            is GoogleAccountRepository.Resolution.NotFound ->
+            is GoogleAccountRepository.Resolution.NotFound -> {
+                CallRecorderLog.e("AUTH", "resolve=$saved -> NOT FOUND. Visible: ${resolution.visible.map { it.name }}")
                 CredentialResult.Problem(
                     kind = CredentialResult.Problem.Kind.ACCOUNT_NOT_ON_DEVICE,
                     message = "\"$saved\" is not one of the Google accounts this app can use. " +
@@ -85,6 +109,7 @@ class GoogleAuthManager(private val context: Context) {
                         ". Fix: grant 'Find accounts on the device', or pick the account from the list.",
                     accounts = resolution.visible
                 )
+            }
 
             GoogleAccountRepository.Resolution.NoneSaved ->
                 CredentialResult.Problem(

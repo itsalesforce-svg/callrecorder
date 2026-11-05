@@ -2,6 +2,10 @@ package com.example.callrecorder.ui.screens
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,10 +23,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
 import androidx.compose.ui.unit.dp
 import com.example.callrecorder.auth.GoogleAccountRepository
 import com.example.callrecorder.cloud.DriveConnectionTester
 import com.example.callrecorder.data.RecordingStorage
+import com.example.callrecorder.debug.CallRecorderLog
 import com.example.callrecorder.ui.viewmodel.DriveLinkState
 import com.example.callrecorder.ui.viewmodel.SettingsViewModel
 
@@ -201,6 +207,25 @@ fun SettingsScreen(
                             OutlinedButton(onClick = { viewModel.unlinkAccount() }) {
                                 Text("Unlink")
                             }
+                        }
+                    }
+
+                    if (state.needsConsoleSetup) {
+                        Spacer(Modifier.height(12.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                "This is not an account problem. Google Play services needs this app " +
+                                    "registered in the Cloud project before it will issue a Drive token, and " +
+                                    "no button on this phone can change that. The exact package name and " +
+                                    "SHA-1 to paste into Cloud Console are at the bottom of this screen " +
+                                    "under 'Debug & Diagnostics'. After registering them, tap " +
+                                    "'Test Drive connection' again.",
+                                modifier = Modifier.padding(10.dp),
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                     }
 
@@ -407,6 +432,125 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ------------------------------------------------------------------ Debug
+            SectionHeader("Debug & Diagnostics")
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "If Drive or recording still fails, run these checks and send the log. The log " +
+                            "contains build, device, account visibility, the real Play services error and " +
+                            "the signing fingerprint - never passwords or tokens.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = { viewModel.runSelfTest(recordSample = true) },
+                        enabled = !state.diagnosticsRunning,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (state.diagnosticsRunning) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        } else {
+                            Icon(Icons.Default.BugReport, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(
+                            if (state.diagnosticsRunning) "Running checks…"
+                            else "Run self-test (accounts + token + 2s mic sample)"
+                        )
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(onClick = { shareLog(context, viewModel.debugFile()) }) {
+                            Icon(Icons.Default.Share, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Share debug log")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                copyToClipboard(context, viewModel.debugSnapshot())
+                            }
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Copy log")
+                        }
+                        OutlinedButton(onClick = { viewModel.clearDebugLog() }) {
+                            Text("Clear")
+                        }
+                    }
+
+                    state.diagnosticsResult?.let { result ->
+                        Spacer(Modifier.height(10.dp))
+                        SelectionContainer {
+                            Text(
+                                result,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(12.dp))
+
+                    Text("Signing identity (needed in Google Cloud Console)",
+                        style = MaterialTheme.typography.bodyLarge)
+                    Spacer(Modifier.height(4.dp))
+                    Text("package: ${context.packageName}", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(4.dp))
+                    SelectionContainer {
+                        Text(
+                            "SHA-1: ${state.signingSha1}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    SelectionContainer {
+                        Text(
+                            "SHA-256: ${state.signingSha256}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = {
+                            copyToClipboard(
+                                context,
+                                "Package name: ${context.packageName}\nSHA-1: ${state.signingSha1}"
+                            )
+                        }
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Copy package + SHA-1")
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Cloud Console > APIs & Services > Credentials > Create credentials > OAuth client " +
+                            "ID > Android needs exactly this package name and SHA-1. Each GitHub Actions " +
+                            "build is signed with a new debug key, so a new download needs the new SHA-1 " +
+                            "unless the workflow has the stable keystore set up.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
         }
     }
 
@@ -582,4 +726,31 @@ private fun AccountPickerDialog(
             TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
+}
+
+/**
+ * Hands the log file to any app that accepts text: Gmail, Keep, Drive, a chat app…
+ * FileProvider is used because a raw `file://` URI throws FileUriExposedException on API 24+.
+ */
+private fun shareLog(context: Context, file: java.io.File) {
+    val authority = "${context.packageName}.fileprovider"
+    val uri = runCatching {
+        FileProvider.getUriForFile(context, authority, file)
+    }.getOrNull()
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, "Call Recorder debug log")
+        putExtra(Intent.EXTRA_TEXT, runCatching { file.readText() }.getOrDefault("(log unreadable)"))
+        if (uri != null) {
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { context.startActivity(Intent.createChooser(intent, "Share debug log")) }
+}
+
+private fun copyToClipboard(context: Context, text: String) {
+    val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    manager?.setPrimaryClip(ClipData.newPlainText("Call Recorder debug log", text))
 }

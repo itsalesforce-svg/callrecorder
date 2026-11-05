@@ -5,6 +5,9 @@ import android.content.Intent
 import com.example.callrecorder.auth.AppPrefs
 import com.example.callrecorder.auth.GoogleAuthManager
 import com.example.callrecorder.auth.GoogleAccountRepository
+import com.example.callrecorder.debug.AppSigning
+import com.example.callrecorder.debug.CallRecorderLog
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -35,7 +38,9 @@ class DriveConnectionTester(private val context: Context) {
         val ok: Boolean,
         val headline: String,
         val steps: List<TestStep>,
-        val consentIntent: Intent?
+        val consentIntent: Intent?,
+        /** False when no on-device action can fix it (Cloud Console configuration problem). */
+        val failureFixableOnDevice: Boolean = true
     ) {
         val failedStep: TestStep? get() = steps.firstOrNull { it.status == StepStatus.FAIL }
         val detail: String get() = failedStep?.detail ?: "All checks passed."
@@ -46,6 +51,9 @@ class DriveConnectionTester(private val context: Context) {
 
     suspend fun run(): Report = withContext(Dispatchers.IO) {
         val steps = mutableListOf<TestStep>()
+        CallRecorderLog.d("TEST", "--- Drive connection test started ---")
+        CallRecorderLog.d("TEST", "package=${context.packageName} sha1=${AppSigning.sha1(context)}")
+        CallRecorderLog.d("TEST", "scope=${GoogleAuthManager.SCOPE_LABEL}")
 
         // ---- Step 1: runtime permission -----------------------------------------------------
         // Missing GET_ACCOUNTS is reported as advisory (SKIP) rather than a hard failure: the
@@ -99,9 +107,16 @@ class DriveConnectionTester(private val context: Context) {
         // ---- Step 3: OAuth token for drive.file --------------------------------------------
         var consent: Intent? = null
         val token: String? = try {
-            ready.credential.getToken()
+            CallRecorderLog.d("TEST", "requesting token for ${ready.accountName} (synthetic=${ready.usedSyntheticAccount})")
+            ready.credential.getToken().also {
+                CallRecorderLog.d("TEST", "token issued, ${it.length} chars")
+            }
         } catch (t: Throwable) {
-            val failure = DriveErrorMapper.describe(t)
+            // Log the raw type/message/cause chain: this is the line that explains the failure.
+            val chain = generateSequence(t as Throwable?) { it.cause }
+                .joinToString(" <- ") { "${it.javaClass.name}: ${it.message}" }
+            CallRecorderLog.e("TEST", "getToken FAILED: $chain", t)
+            val failure = DriveErrorMapper.describe(t, context)
             consent = failure.recoverIntent
             steps += TestStep(
                 label = "OAuth access token (${GoogleAuthManager.SCOPE_LABEL})",
@@ -140,7 +155,8 @@ class DriveConnectionTester(private val context: Context) {
                     detail = "drive.files/about answered, so uploads can proceed now."
                 )
             } catch (t: Throwable) {
-                val failure = DriveErrorMapper.describe(t)
+                CallRecorderLog.e("TEST", "Drive about().get() failed", t)
+                val failure = DriveErrorMapper.describe(t, context)
                 steps += TestStep(
                     label = "Google Drive API round-trip",
                     status = StepStatus.FAIL,
@@ -155,7 +171,7 @@ class DriveConnectionTester(private val context: Context) {
 
         // When the address cannot be turned into a token, show the accounts the app *can* see: the
         // usual cause is that the phone is signed in with a different mailbox.
-        if (failed != null) {
+        if (failed != null && !failed.detail.contains("UnregisteredOnApiConsole", true)) {
             val alternative = repository.anotherGoogleAccount(ready.accountName)
             if (alternative != null) {
                 steps += TestStep(
@@ -170,16 +186,24 @@ class DriveConnectionTester(private val context: Context) {
 
         val ok = failed == null
         val advisory = steps.firstOrNull { it.status == StepStatus.SKIP }
+        steps.forEach { step -> CallRecorderLog.d("TEST", "${step.status} ${step.label}: ${step.detail}") }
+        CallRecorderLog.d("TEST", "--- test finished: ok=$ok ---")
         AppPrefs.setDriveConsentNeeded(context, !ok && consent != null)
+        val deviceFixable = failed?.let { step ->
+            // A configuration failure is the one case where re-testing cannot possibly help.
+            !step.detail.contains("UnregisteredOnApiConsole", ignoreCase = true)
+        } ?: true
         Report(
             ok = ok,
             headline = when {
+                !ok && !deviceFixable -> "Configuration needed in Google Cloud Console"
                 !ok -> failed?.label ?: "Drive connection failed"
                 advisory != null -> "Drive works, but grant the accounts permission too"
                 else -> "Drive is ready - recordings will upload to /CallRecordings"
             },
             steps = steps,
-            consentIntent = consent
+            consentIntent = consent,
+            failureFixableOnDevice = deviceFixable
         )
     }
 }

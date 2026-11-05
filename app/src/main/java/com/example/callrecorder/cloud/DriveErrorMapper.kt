@@ -4,7 +4,10 @@ import android.content.Intent
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAuthIOException
 import com.google.api.client.googleapis.extensions.android.gms.auth.GooglePlayServicesAvailabilityIOException
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
+import com.example.callrecorder.debug.AppSigning
+import com.example.callrecorder.debug.CallRecorderLog
 import com.google.api.client.googleapis.json.GoogleJsonResponseException
+import com.google.android.gms.auth.GoogleAuthException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import javax.net.ssl.SSLException
@@ -29,18 +32,59 @@ data class DriveFailure(
     /** True when the linked Google account itself is unusable and must be re-selected. */
     val needsAccountSetup: Boolean = false,
     /** True when the failure is transient (network) and a retry makes sense. */
-    val retryable: Boolean = false
+    val retryable: Boolean = false,
+    /**
+     * False when no amount of retrying or re-testing on this phone can help (e.g. the signing key is
+     * not registered in Cloud Console). The UI then stops nagging and shows setup instructions.
+     */
+    val fixableOnDevice: Boolean = true
 )
 
 object DriveErrorMapper {
 
-    /** Rethrow coroutine cancellation, then map everything else. */
-    fun describe(throwable: Throwable): DriveFailure {
+    /**
+     * Rethrow coroutine cancellation, then map everything else.
+     *
+     * [context] is optional; when supplied, configuration errors can quote this APK's real package
+     * name and signing SHA-1 instead of telling the user to "check the console".
+     */
+    fun describe(throwable: Throwable, context: android.content.Context? = null): DriveFailure {
         if (throwable is CancellationException) throw throwable
-        return map(throwable)
+        val failure = map(throwable, context)
+        CallRecorderLog.d("DRIVE", "mapped ${throwable.javaClass.name} -> ${failure.headline}")
+        return failure
     }
 
-    private fun map(t: Throwable): DriveFailure {
+    private fun map(t: Throwable, context: android.content.Context? = null): DriveFailure {
+        // 0) The Android OAuth client is not registered for this package+SHA-1. This is by far the
+        //    most common real cause of "the account is there but no token arrives", it is permanent
+        //    until the console is fixed, and the generic messages below hide it completely.
+        val rawMessage = generateSequence(t) { it.cause }
+            .mapNotNull { it.message }
+            .joinToString(" | ")
+        if (rawMessage.contains("UnregisteredOnApiConsole", ignoreCase = true) ||
+            rawMessage.contains("unregistered", ignoreCase = true) ||
+            (t is GoogleAuthException && rawMessage.contains("ApplicationIdentity", ignoreCase = true))
+        ) {
+            val sha1 = context?.let { AppSigning.sha1(it) } ?: "(open the Debug card to see it)"
+            val pkg = context?.packageName ?: "com.example.callrecorder"
+            return DriveFailure(
+                headline = "This build's signing key is not registered in Google Cloud Console",
+                detail = "Google Play services refused the token: 'UnregisteredOnApiConsole'. The legacy " +
+                    "GoogleAuthUtil flow has no client id in the code - Play services looks the app up " +
+                    "implicitly by package name + signing SHA-1, and no Android OAuth client matches this " +
+                    "build.\n\nRegister these two values in the SAME Cloud project where 'Google Drive API' " +
+                    "is enabled (APIs & Services > Credentials > Create credentials > OAuth client ID > " +
+                    "Android):\n\nPackage name: $pkg\nSHA-1: $sha1\n\n" +
+                    "IMPORTANT: every GitHub Actions build is signed with a freshly generated debug keystore, " +
+                    "so its SHA-1 changes on each run and any value registered for a previous download stops " +
+                    "working. See 'Stable signing key' in the README - after that the SHA-1 stays the same.",
+                needsAccountSetup = false,
+                retryable = false,
+                fixableOnDevice = false
+            )
+        }
+
         // 1) Play Services needs the user to do something (consent, re-login). Its intent is the fix.
         (t as? GooglePlayServicesAvailabilityIOException)?.let { e ->
             return DriveFailure(

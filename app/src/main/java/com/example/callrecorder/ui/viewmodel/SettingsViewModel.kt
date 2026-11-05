@@ -10,6 +10,9 @@ import com.example.callrecorder.auth.AppPrefs
 import com.example.callrecorder.auth.GoogleAccountRepository
 import com.example.callrecorder.auth.GoogleAuthManager
 import com.example.callrecorder.cloud.DriveConnectionTester
+import com.example.callrecorder.debug.AppSigning
+import com.example.callrecorder.debug.CallRecorderLog
+import com.example.callrecorder.debug.SelfTest
 import com.example.callrecorder.worker.SyncScheduler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -58,7 +61,18 @@ data class SettingsUiState(
     val consentIntent: Intent? = null,
     val syncMessage: String? = null,
     val callRecordingIssue: String? = null,
-    val lastSyncSummary: String? = null
+    val lastSyncSummary: String? = null,
+    // ---- diagnostics ----
+    val signingSha1: String = "",
+    val signingSha256: String = "",
+    val logLineCount: Int = 0,
+    val diagnosticsRunning: Boolean = false,
+    val diagnosticsResult: String? = null,
+    /**
+     * True when the last failure cannot be fixed on this phone (the build's signing key is not
+     * registered in Google Cloud Console). The card then stops offering "save/test again".
+     */
+    val needsConsoleSetup: Boolean = false
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -129,7 +143,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         headline = headlineFor(linkState, saved, permission, accounts.size),
                         detail = blockerDetail(permission, accounts.size, total, saved),
                         callRecordingIssue = AppPrefs.lastRecordingIssue(ctx),
-                        lastSyncSummary = syncSummary()
+                        lastSyncSummary = syncSummary(),
+                        signingSha1 = AppSigning.sha1(ctx),
+                        signingSha256 = AppSigning.sha256(ctx),
+                        logLineCount = if (CallRecorderLog.hasEntries()) 1 else 0
                     )
                 }
             }
@@ -247,7 +264,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     headline = "Linked: $name",
                     detail = null,
                     steps = emptyList(),
-                    consentIntent = null
+                    consentIntent = null,
+                    needsConsoleSetup = false
                 )
             }
             runConnectionTest()
@@ -366,6 +384,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     detail = if (report.ok) null else report.failedStep?.detail,
                     steps = report.steps,
                     consentIntent = report.consentIntent,
+                    needsConsoleSetup = !report.ok && !report.failureFixableOnDevice,
                     lastSyncSummary = syncSummary()
                 )
             }
@@ -410,6 +429,79 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     .setData(android.net.Uri.fromParts("package", ctx.packageName, null))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Diagnostics (the "Debug" card)
+    // -----------------------------------------------------------------------------------------
+
+    /** Full log + build + signing identity, ready to paste into a chat. */
+    fun debugSnapshot(): String = CallRecorderLog.snapshot(getApplication())
+
+    /** The log as a file, for ACTION_SEND. */
+    fun debugFile(): java.io.File =
+        CallRecorderLog.exportToFile(getApplication())
+
+    fun clearDebugLog() {
+        CallRecorderLog.clear(getApplication())
+        _uiState.update { it.copy(diagnosticsResult = "Log cleared.") }
+    }
+
+    /**
+     * Runs the three checks that actually matter for this app on this phone:
+     * account visibility, token issuance (surfacing the real Play services message) and whether the
+     * microphone can capture audio at all.
+     */
+    fun runSelfTest(recordSample: Boolean = false) {
+        if (_uiState.value.diagnosticsRunning) return
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            _uiState.update { it.copy(diagnosticsRunning = true, diagnosticsResult = "Running…") }
+            CallRecorderLog.d("SELFTEST", "self test requested (recordSample=$recordSample)")
+            val accounts = try {
+                SelfTest.diagnoseAccounts(ctx)
+            } catch (t: Throwable) {
+                CallRecorderLog.e("SELFTEST", "account diagnosis failed", t)
+                "account diagnosis failed: ${t.javaClass.simpleName}: ${t.message}"
+            }
+            val token = try {
+                SelfTest.probeToken(ctx)
+            } catch (t: Throwable) {
+                CallRecorderLog.e("SELFTEST", "token probe failed", t)
+                "token probe failed: ${t.javaClass.simpleName}: ${t.message}"
+            }
+            var audio = "skipped"
+            if (recordSample) {
+                val outcome = SelfTest.recordSample(ctx, seconds = 2)
+                audio = (if (outcome.ok) "PASS - " else "FAIL - ") + outcome.message
+                if (!outcome.ok) {
+                    AppPrefs.setLastRecordingIssue(ctx, "Microphone self-test failed: ${outcome.message}")
+                }
+            }
+            val report = buildString {
+                appendLine("ACCOUNTS")
+                appendLine(accounts.trim())
+                appendLine()
+                appendLine("TOKEN")
+                appendLine(token)
+                if (recordSample) {
+                    appendLine()
+                    appendLine("MICROPHONE")
+                    appendLine(audio)
+                }
+            }
+            _uiState.update {
+                it.copy(
+                    diagnosticsRunning = false,
+                    diagnosticsResult = report.trim(),
+                    callRecordingIssue = AppPrefs.lastRecordingIssue(ctx)
+                )
+            }
+            // Refresh the Drive card so a successful token shows up there too.
+            if (token.startsWith("TOKEN OK")) {
+                runConnectionTest()
+            }
         }
     }
 

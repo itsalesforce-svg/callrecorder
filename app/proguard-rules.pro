@@ -40,3 +40,9 @@
 -dontwarn org.apache.commons.codec.**
 -dontwarn javax.annotation.**
 -dontwarn com.google.android.gms.**
+
+# ---------------------------------------------------------------------------------------------------
+# Debug log / diagnostics
+# Class names appear in the shared log, so keep them readable in release builds too.
+-keepnames class com.example.callrecorder.debug.**
+-keep class com.example.callrecorder.debug.** { *; }

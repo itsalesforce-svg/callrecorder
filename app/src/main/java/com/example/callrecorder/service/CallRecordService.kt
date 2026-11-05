@@ -15,6 +15,7 @@ import com.example.callrecorder.MainActivity
 import com.example.callrecorder.R
 import com.example.callrecorder.auth.AppPrefs
 import com.example.callrecorder.data.RecordingStorage
+import com.example.callrecorder.debug.CallRecorderLog
 import com.example.callrecorder.data.local.AppDatabase
 import com.example.callrecorder.data.local.CallRecordEntity
 import com.example.callrecorder.worker.SyncScheduler
@@ -45,9 +46,11 @@ class CallRecordService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        CallRecorderLog.d("SERVICE", "onCreate")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        CallRecorderLog.d("SERVICE", "onStartCommand action=${intent?.action}")
         when (intent?.action) {
             ACTION_START_RECORDING -> {
                 val phone = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown"
@@ -61,9 +64,30 @@ class CallRecordService : Service() {
     }
 
     private fun startCallRecording(phoneNumber: String) {
-        if (isRecording) return
+        if (isRecording) {
+            CallRecorderLog.d("SERVICE", "already recording, ignoring start for $phoneNumber")
+            return
+        }
         if (!AppPrefs.autoRecord(applicationContext)) {
             // The "Automatic Call Recording" switch on the Settings screen must actually gate work.
+            CallRecorderLog.w("SERVICE", "automatic recording is disabled in Settings - not recording $phoneNumber")
+            RecordingStorage.reportRecordingIssue(
+                applicationContext,
+                "Automatic recording is switched OFF in Settings, so this call was not recorded."
+            )
+            stopSelf()
+            return
+        }
+        val mic = androidx.core.content.ContextCompat.checkSelfPermission(
+            applicationContext, android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        CallRecorderLog.d("SERVICE", "start requested for $phoneNumber, RECORD_AUDIO granted=$mic")
+        if (!mic) {
+            RecordingStorage.reportRecordingIssue(
+                applicationContext,
+                "Microphone permission is missing, so the call could not be recorded. Open the " +
+                    "Permissions screen and grant the microphone."
+            )
             stopSelf()
             return
         }
@@ -91,9 +115,11 @@ class CallRecordService : Service() {
                 startRecorderWith(phoneNumber, source)
                 isRecording = true
                 AppPrefs.setLastRecordingIssue(applicationContext, null)
+                CallRecorderLog.d("SERVICE", "recording started with source=$source -> $outputFilePath")
                 return
             } catch (t: Throwable) {
                 lastError = t
+                CallRecorderLog.e("SERVICE", "recorder failed with source=$source", t)
                 releaseRecorder()
             }
         }
@@ -151,6 +177,10 @@ class CallRecordService : Service() {
             isRecording = false
 
             val produced = File(outputFilePath)
+            CallRecorderLog.d(
+                "SERVICE",
+                "stopping: file=${produced.name} exists=${produced.exists()} bytes=${produced.length()}"
+            )
             if (!produced.exists() || produced.length() == 0L) {
                 RecordingStorage.reportRecordingIssue(
                     applicationContext,
@@ -176,13 +206,14 @@ class CallRecordService : Service() {
                     filePath = outputFilePath,
                     isSynced = false
                 )
-                db.callRecordDao().insertRecord(entity)
+                val rowId = db.callRecordDao().insertRecord(entity)
+                CallRecorderLog.d("SERVICE", "saved record #$rowId duration=${durationSeconds}s path=$outputFilePath")
 
                 // Schedule background cloud sync via WorkManager
                 SyncScheduler.scheduleImmediateSync(applicationContext)
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            CallRecorderLog.e("SERVICE", "stopCallRecording failed", e)
         } finally {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -230,6 +261,7 @@ class CallRecordService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        CallRecorderLog.d("SERVICE", "onDestroy (isRecording=$isRecording)")
         mediaRecorder?.release()
         mediaRecorder = null
     }

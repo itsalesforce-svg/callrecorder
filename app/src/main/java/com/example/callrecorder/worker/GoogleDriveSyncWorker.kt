@@ -6,6 +6,7 @@ import androidx.work.WorkerParameters
 import com.example.callrecorder.auth.AppPrefs
 import com.example.callrecorder.auth.GoogleAuthManager
 import com.example.callrecorder.cloud.GoogleDriveUploader
+import com.example.callrecorder.debug.CallRecorderLog
 import com.example.callrecorder.data.local.AppDatabase
 import kotlinx.coroutines.CancellationException
 import java.io.File
@@ -29,6 +30,7 @@ class GoogleDriveSyncWorker(
         val authManager = GoogleAuthManager(context)
 
         val unsyncedList = dao.getUnsyncedRecords()
+        CallRecorderLog.d("SYNC", "worker started: ${unsyncedList.size} unsynced record(s)")
         if (unsyncedList.isEmpty()) {
             AppPrefs.recordSyncResult(context, "idle", 0, 0, "Nothing to upload - all records are synced.")
             return Result.success()
@@ -38,6 +40,7 @@ class GoogleDriveSyncWorker(
 
         when (val credential = authManager.credentialResult()) {
             is GoogleAuthManager.CredentialResult.Problem -> {
+                CallRecorderLog.e("SYNC", "no usable account (${credential.kind}): ${credential.message}")
                 val noAccountSaved =
                     credential.kind == GoogleAuthManager.CredentialResult.Problem.Kind.NO_ACCOUNT_SAVED
                 AppPrefs.recordSyncResult(context, if (noAccountSaved) "not_linked" else "needs_auth", 0, unsyncedList.size, credential.message)
@@ -80,6 +83,11 @@ class GoogleDriveSyncWorker(
                         }
 
                         is GoogleDriveUploader.UploadResult.Failure -> {
+                            CallRecorderLog.e(
+                                "SYNC",
+                                "upload failed for ${record.filePath}: " +
+                                    "${result.failure.headline} - ${result.failure.detail}"
+                            )
                             failed++
                             val failure = result.failure
                             if (failure.needsAccountSetup) {
@@ -102,6 +110,7 @@ class GoogleDriveSyncWorker(
                     else -> "All $failed upload(s) failed. Check 'Test Drive connection'."
                 }
 
+                CallRecorderLog.d("SYNC", "finished: uploaded=$uploaded failed=$failed message=$message")
                 AppPrefs.recordSyncResult(
                     context = context,
                     state = if (failed == 0) "success" else if (authFailure != null) "needs_auth" else "error",
