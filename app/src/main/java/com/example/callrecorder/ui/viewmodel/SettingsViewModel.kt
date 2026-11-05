@@ -1,14 +1,18 @@
 package com.example.callrecorder.ui.viewmodel
 
+import android.Manifest
 import android.accounts.AccountManager
 import android.app.Application
+import android.content.pm.PackageManager
 import android.content.Context
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.core.content.ContextCompat
 import com.example.callrecorder.auth.GoogleAuthManager
 import com.example.callrecorder.worker.SyncScheduler
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
+import com.google.android.gms.auth.UserRecoverableAuthException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,6 +112,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             val result = runCatching {
                 withContext(Dispatchers.IO) {
                     val application = getApplication<Application>()
+                    if (ContextCompat.checkSelfPermission(application, Manifest.permission.GET_ACCOUNTS) != PackageManager.PERMISSION_GRANTED) {
+                        error("Grant the Account access permission from the shield icon before testing Google Drive.")
+                    }
                     val deviceAccounts = AccountManager.get(application).getAccountsByType("com.google")
                     if (deviceAccounts.none { it.name.equals(email.trim(), ignoreCase = true) }) {
                         error("${email.trim()} is not available as a Google account on this phone. Add it under Android Settings > Accounts, then try again.")
@@ -119,7 +126,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             val recoverableAuthError = generateSequence(result.exceptionOrNull()) { it.cause }
-                .filterIsInstance<UserRecoverableAuthIOException>()
+                .mapNotNull { cause ->
+                    when (cause) {
+                        is UserRecoverableAuthIOException -> cause.intent
+                        is UserRecoverableAuthException -> cause.intent
+                        else -> null
+                    }
+                }
                 .firstOrNull()
             if (recoverableAuthError != null) {
                 _uiState.value = _uiState.value.copy(
@@ -127,7 +140,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     driveConnected = null,
                     driveConnectionMessage = "Google needs your permission to access Drive. Complete the Google authorization prompt."
                 )
-                _driveAuthorizationRequests.emit(recoverableAuthError.intent)
+                _driveAuthorizationRequests.emit(recoverableAuthError)
                 return@launch
             }
 
@@ -138,13 +151,22 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     driveConnectionMessage = "Connected to Google Drive as ${result.getOrNull()}."
                 )
             } else {
+                val error = result.exceptionOrNull()
+                val rootError = generateSequence(error) { it.cause }.lastOrNull()
+                val detail = rootError?.localizedMessage?.takeIf { it.isNotBlank() && it != "null" }
+                val message = when {
+                    rootError is SecurityException ->
+                        "Account permission is blocked. Grant Account access in Permissions, then test again."
+                    detail?.contains("name must not be empty", ignoreCase = true) == true ||
+                        detail?.equals("null", ignoreCase = true) == true ->
+                        "Android could not resolve this account. Make sure this exact Gmail account is added under Android Settings > Accounts and grant Account access to Call Recorder."
+                    detail != null -> "Drive connection failed: $detail"
+                    else -> "Drive connection failed (${rootError?.javaClass?.simpleName ?: "unknown error"}). Check the account, internet, and Google Drive authorization."
+                }
                 _uiState.value.copy(
                     isDriveTestRunning = false,
                     driveConnected = false,
-                    driveConnectionMessage = result.exceptionOrNull()?.localizedMessage
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let { "Drive connection failed: $it" }
-                        ?: "Drive connection failed. Check the account, network, and Google Drive authorization."
+                    driveConnectionMessage = message
                 )
             }
         }
