@@ -29,7 +29,34 @@ jobs:
 
     # Compiles the application and generates the APK
     - name: Build with Gradle
-      run: gradle assembleDebug --no-daemon
+      run: |
+        set -o pipefail
+        gradle assembleDebug --no-daemon 2>&1 | tee /tmp/gradle-build.log
+      continue-on-error: true
+
+    # The raw log lives on a blob store that is not always reachable; mirror every compiler
+    # diagnostic into a workflow annotation so failures are visible in the run summary, in the
+    # Checks API, and in `gh run view` output.
+    - name: Report build failures as annotations
+      if: always()
+      run: |
+        if [ ! -s /tmp/gradle-build.log ]; then
+          echo "::warning::No build log produced."
+          exit 0
+        fi
+        if grep -q "BUILD SUCCESSFUL" /tmp/gradle-build.log; then
+          echo "Build succeeded - no annotations to report."
+          exit 0
+        fi
+        sed -e 's/\x1b\[[0-9;]*m//g' /tmp/gradle-build.log \
+          | grep -E "^e: file|^w: file.*error|error: |\* What went wrong|Execution failed for task" \
+          | sed -e 's/%/%25/g' -e 's/\r//' \
+          | head -n 60 \
+          | cut -c1-450 \
+          | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+        exit 1
 
     # This uploads the generated file so you can click and download it
     - name: Upload Finished APK
