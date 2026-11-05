@@ -1,7 +1,9 @@
 package com.example.callrecorder.ui.screens
 
+import android.Manifest
 import android.accounts.AccountManager
 import android.app.Activity
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -17,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.example.callrecorder.data.RecordingStorage
 import com.example.callrecorder.ui.viewmodel.SettingsViewModel
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
@@ -33,13 +36,42 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { viewModel.refreshCallRecordingIssue() }
     val context = LocalContext.current
     val storagePath = remember(context) { RecordingStorage.directory(context).absolutePath }
+    var accountEmailDraft by remember(state.googleAccountName) {
+        mutableStateOf(state.googleAccountName.orEmpty())
+    }
+    var showManualAccountEntry by remember { mutableStateOf(false) }
+    var accountPickerMessage by remember { mutableStateOf<String?>(null) }
 
     val accountPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val accountName = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
         if (result.resultCode == Activity.RESULT_OK && !accountName.isNullOrBlank()) {
+            accountEmailDraft = accountName
             viewModel.setGoogleAccountName(accountName)
+            accountPickerMessage = null
+        }
+    }
+
+    fun launchAccountPicker() {
+        try {
+            val credential = GoogleAccountCredential.usingOAuth2(
+                context,
+                Collections.singletonList(DriveScopes.DRIVE_FILE)
+            )
+            accountPicker.launch(credential.newChooseAccountIntent())
+        } catch (error: Exception) {
+            accountPickerMessage = "Couldn't open the account chooser. Enter an account already added to this device below."
+            showManualAccountEntry = true
+        }
+    }
+
+    val accountPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) launchAccountPicker() else {
+            accountPickerMessage = "Account access was not granted. Enter a Google account already on this device below."
+            showManualAccountEntry = true
         }
     }
 
@@ -123,17 +155,49 @@ fun SettingsScreen(
                     Spacer(Modifier.height(10.dp))
                     OutlinedButton(
                         onClick = {
-                            val credential = GoogleAccountCredential.usingOAuth2(
-                                context,
-                                Collections.singletonList(DriveScopes.DRIVE_FILE)
-                            )
-                            accountPicker.launch(credential.newChooseAccountIntent())
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.GET_ACCOUNTS) == PackageManager.PERMISSION_GRANTED) {
+                                launchAccountPicker()
+                            } else {
+                                accountPermission.launch(Manifest.permission.GET_ACCOUNTS)
+                            }
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.AccountCircle, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(if (state.googleAccountName == null) "Choose Google account" else "Change Google account")
+                    }
+                    TextButton(onClick = { showManualAccountEntry = !showManualAccountEntry }) {
+                        Text(if (showManualAccountEntry) "Hide manual entry" else "Enter account email manually")
+                    }
+                    if (showManualAccountEntry) {
+                        OutlinedTextField(
+                            value = accountEmailDraft,
+                            onValueChange = { accountEmailDraft = it.trim() },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Google account email") },
+                            placeholder = { Text("name@gmail.com") },
+                            singleLine = true
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                val email = accountEmailDraft.trim()
+                                if (email.contains('@')) {
+                                    viewModel.setGoogleAccountName(email)
+                                    accountPickerMessage = "Account saved. It must also be present on this device."
+                                } else {
+                                    accountPickerMessage = "Enter a valid Google account email."
+                                }
+                            },
+                            enabled = accountEmailDraft.contains('@'),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Save account")
+                        }
+                    }
+                    accountPickerMessage?.let { message ->
+                        Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
 
                     HorizontalDivider(Modifier.padding(vertical = 12.dp))
