@@ -42,7 +42,11 @@ class GoogleAuthManager(private val context: Context) {
             val usedSyntheticAccount: Boolean
         ) : CredentialResult()
 
-        data class Problem(val kind: Kind, val message: String, val accounts: List<GoogleAccountRepository.VisibleAccount>) {
+        data class Problem(
+            val kind: Kind,
+            val message: String,
+            val accounts: List<GoogleAccountRepository.VisibleAccount>
+        ) : CredentialResult() {
             enum class Kind { NO_ACCOUNT_SAVED, ACCOUNT_NOT_ON_DEVICE }
         }
     }

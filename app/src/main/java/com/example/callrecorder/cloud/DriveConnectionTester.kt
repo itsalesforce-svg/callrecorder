@@ -160,7 +160,7 @@ class DriveConnectionTester(private val context: Context) {
         Report(
             ok = ok,
             headline = if (ok) "Drive is ready - recordings will upload to /CallRecordings"
-            else failed!!.headline,
+            else failed?.label ?: "Drive connection failed",
             steps = steps,
             consentIntent = consent
         )
