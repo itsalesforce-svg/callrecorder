@@ -259,3 +259,43 @@ eagerly than stock Android 9. If calls are not recorded while the app is not ope
 
 The debug log makes this visible: if a call happened and there is no `CALLS: PHONE_STATE=...` line at
 all, the receiver never ran, which points at the OEM restriction rather than at the recorder.
+
+## Recording during a call: `RuntimeException: start failed`
+
+A real call on the OPPO test device logged
+
+```
+Recorder could not start (RuntimeException: start failed.). Close other apps that use the
+microphone and check the Microphone permission.
+```
+
+while the microphone self-test passed with `MIC produced 34080 bytes, peak amplitude 1523`. The
+microphone is fine; the problem is *when* it is opened. On ColorOS (and MIUI/EMUI) of that era the
+telephony stack already owns the microphone by the time `OFFHOOK` arrives, so `MediaRecorder.start()`
+inside the call can only fail, and switching audio source cannot help.
+
+The fix is to open the recorder **before the call connects**:
+
+- on `RINGING` the service starts capturing while the microphone is still free, and keeps that capture
+  for the whole call; `OFFHOOK` only marks the moment the call connected (it does **not** restart the
+  recorder, which would reproduce the failure);
+- outgoing calls have no `RINGING`, so `NEW_OUTGOING_CALL` (API 26-28) does the same thing at dial time;
+- if the call is never answered the pre-opened file is deleted, so a ringing phone leaves no
+  recordings and no call-log rows behind;
+- each audio source is tried three times with backoff, covering the brief window where the audio HAL is
+  busy around connect;
+- `MediaRecorder.OnErrorListener` records `what`/`extra`, the only place some encoder failures surface.
+
+The switch **Settings > Recording Preferences > "Open the microphone while ringing"** controls this
+(default on). If the OEM blocks microphone access for the entire duration of a call, nothing in a
+third-party app can work around it; the recording card now says so explicitly instead of blaming the
+permission.
+
+## Reinstalling resets the account pick
+
+Account visibility is stored per app package by the system and removed with the app. A reinstall
+therefore returns `accounts visible to this app: 0` until the account is picked again in the system
+chooser — that is expected, not a regression. It also matters here for a second reason: a build signed
+with a **different** key cannot install over the old one, so Android forces an uninstall, and the pick
+is lost with it. Once an APK is built from the pinned keystore (`69:D8:18:E2:...`), later builds install
+over the top and keep both the data and the visibility grant.
