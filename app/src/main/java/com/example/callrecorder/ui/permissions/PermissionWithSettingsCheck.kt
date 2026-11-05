@@ -34,6 +34,7 @@ fun PermissionWithSettingsCheck(
         buildList {
             add(Manifest.permission.READ_PHONE_STATE)
             add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.GET_ACCOUNTS)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
