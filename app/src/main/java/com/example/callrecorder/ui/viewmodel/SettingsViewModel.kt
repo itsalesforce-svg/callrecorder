@@ -72,7 +72,14 @@ data class SettingsUiState(
      * True when the last failure cannot be fixed on this phone (the build's signing key is not
      * registered in Google Cloud Console). The card then stops offering "save/test again".
      */
-    val needsConsoleSetup: Boolean = false
+    val needsConsoleSetup: Boolean = false,
+    /**
+     * Android 8+ hides the account list from apps targeting O+ until the user picks an account with
+     * the system chooser. When true, an empty device list is expected - it is not a broken phone.
+     */
+    val accountsHiddenByOs: Boolean = false,
+    /** The com.google authenticator is installed, i.e. accounts exist even if we cannot list them. */
+    val googleAuthenticatorPresent: Boolean = false
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -116,6 +123,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 val permission = repository.hasAccountsPermission()
                 val accounts = repository.googleAccounts()
                 val total = repository.totalAccountCount()
+                val authenticator = repository.hasGoogleAuthenticator()
+                val hiddenByOs = repository.visibilityRulesApply(ctx) && accounts.isEmpty()
+                CallRecorderLog.d(
+                    "ACCOUNTS",
+                    "permission=$permission visible=${accounts.size} total=$total " +
+                        "googleAuthenticator=$authenticator hiddenByOs=$hiddenByOs"
+                )
                 val consentPending = saved != null && AppPrefs.driveConsentNeeded(ctx)
                 val stillSameAccount = saved != null && saved == previous.googleAccountName
                 val linkState = when {
@@ -139,6 +153,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         accountsPermissionGranted = permission,
                         deviceAccounts = accounts,
                         totalAccounts = total,
+                        accountsHiddenByOs = hiddenByOs,
+                        googleAuthenticatorPresent = authenticator,
                         linkState = linkState,
                         headline = headlineFor(linkState, saved, permission, accounts.size),
                         detail = blockerDetail(permission, accounts.size, total, saved),
@@ -161,7 +177,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     ): String = when (state) {
         DriveLinkState.NO_ACCOUNT -> when {
             !permission -> "Grant the accounts permission to see your Google accounts"
-            visibleCount == 0 -> "No Google account found on this phone"
+            // Do NOT say "no Google account found": on Android 8+ an empty list is what the OS
+            // returns for apps targeting O+ until the user picks an account with the chooser.
+            visibleCount == 0 -> "Android is hiding your Google accounts from this app"
             else -> "Pick the Google account that should receive your recordings"
         }
         DriveLinkState.LINKED_NOT_TESTED -> "Linked: $saved (not tested yet)"
@@ -180,12 +198,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     ): String? = when {
         !permission ->
             "Android hides the account list from apps unless GET_ACCOUNTS (a runtime permission) is " +
-                "granted. Without it the Drive client resolves your saved address to null and every " +
-                "sync fails - that is the 'account is null' you saw. Tap 'Grant accounts permission'."
+                "granted. Tap 'Grant accounts permission'."
+        visible == 0 && saved == null && _uiState.value.googleAuthenticatorPresent ->
+            "The Google account is on this phone - Gmail and Drive can see it - but Android 8 and " +
+                "newer deliberately hide the account list from apps that target API 26 or later. " +
+                "GET_ACCOUNTS no longer grants visibility; the platform releases it only after the " +
+                "user picks an account in the system chooser. Tap 'Choose account (system picker)' " +
+                "once: that pick marks the account visible to this app permanently, including after " +
+                "reinstalls of the app data. Typing the address below also works."
         visible == 0 && saved == null ->
-            "This app can see $total account(s) on the device, but none of type com.google. Add a " +
-                "Google account under Settings > Accounts; on ROMs without Play services also enable " +
-                "'Allow all apps to find accounts'."
+            "This app can see $total account(s) on the device, but none of type com.google. On ROMs " +
+                "without Play services also enable 'Allow all apps to find accounts'."
         else -> null
     }
 
@@ -289,8 +312,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /** Intent for the Play services account chooser, or null when this build cannot offer it. */
-    fun systemChooserIntent(): Intent? = runCatching { authManager.chooseAccountIntent() }.getOrNull()
+    /**
+     * System account chooser. The framework chooser comes first because it is the platform's own
+     * documented way of granting account visibility on Android 8+; the Play services AccountPicker is
+     * the fallback for ROMs where the framework one is absent.
+     */
+    fun systemChooserIntent(): Intent? {
+        val framework = runCatching { authManager.frameworkChooserIntent() }.getOrNull()
+        if (framework != null) {
+            CallRecorderLog.d("ACCOUNTS", "using framework AccountManager.newChooseAccountIntent chooser")
+            return framework
+        }
+        CallRecorderLog.w("ACCOUNTS", "framework chooser unavailable, falling back to the Play services picker")
+        return runCatching { authManager.chooseAccountIntent() }.getOrNull()
+    }
 
     /**
      * Handle the chooser result. Play services' AccountPicker answers with `selected_account`,

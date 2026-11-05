@@ -105,6 +105,11 @@ object SelfTest {
         val repository = GoogleAccountRepository(app)
         val builder = StringBuilder()
         builder.appendLine("GET_ACCOUNTS granted: ${repository.hasAccountsPermission()}")
+        builder.appendLine("google authenticator installed: ${repository.hasGoogleAuthenticator()}")
+        builder.appendLine(
+            "android 8+ visibility rules apply: ${repository.visibilityRulesApply(app)} " +
+                "(targetSdk ${app.applicationInfo.targetSdkVersion})"
+        )
         val all = runCatching {
             AccountManager.get(app).accounts.orEmpty().map { "${it.name} (${it.type})" }
         }.getOrElse { listOf("AccountManager threw: ${it.javaClass.simpleName}: ${it.message}") }

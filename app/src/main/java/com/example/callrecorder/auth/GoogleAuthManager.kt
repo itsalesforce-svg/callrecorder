@@ -122,6 +122,9 @@ class GoogleAuthManager(private val context: Context) {
 
     private fun buildCredential(account: android.accounts.Account): GoogleAccountCredential =
         GoogleAccountCredential.usingOAuth2(context, SCOPES)
+            // Recorded on every attempt: these two values are exactly what Play services checks when
+            // it answers "UnregisteredOnApiConsole".
+            .also { logSigningIdentity(context) }
             // setSelectedAccount() instead of setSelectedAccountName(): the latter silently nulls
             // the credential when the name does not match a *visible* account byte-for-byte.
             .setSelectedAccount(account)
@@ -169,6 +172,13 @@ class GoogleAuthManager(private val context: Context) {
      * been observed to close the calling app on some OEM builds (Play services missing/disabled,
      * or GET_ACCOUNTS not granted on Android 13+), which is why the in-app list stays available.
      */
+    /**
+     * The chooser that actually grants visibility on Android 8+ (see GoogleAccountRepository's
+     * frameworkChooserIntent doc). Preferred over [chooseAccountIntent] because it is part of the
+     * platform, not of Play services.
+     */
+    fun frameworkChooserIntent(): Intent? = repository.frameworkChooserIntent()
+
     fun chooseAccountIntent(): Intent? = runCatching {
         val credential = GoogleAccountCredential.usingOAuth2(context, SCOPES)
         AppPrefs.accountName(context)?.let { name ->

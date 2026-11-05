@@ -148,9 +148,10 @@ fun SettingsScreen(
 
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        "Accounts the app can see: ${state.deviceAccounts.size} · all accounts on the " +
-                            "device: ${state.totalAccounts}. Scope used: drive.file (only files this " +
-                            "app creates).",
+                        "Accounts this app is allowed to see: ${state.deviceAccounts.size}" +
+                            (if (state.accountsHiddenByOs) " (hidden by Android 8+ visibility rules - " +
+                                "this is not an error)" else "") +
+                            " · scope used: drive.file (only files this app creates).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -173,6 +174,32 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(8.dp))
+
+                    if (state.accountsHiddenByOs && state.googleAuthenticatorPresent) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    "Why the list is empty",
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Your Google account is on the phone - Gmail and Drive can see it. " +
+                                        "Since Android 8, an app that targets API 26+ is not allowed to " +
+                                        "enumerate accounts at all, even with the permission granted; " +
+                                        "GET_ACCOUNTS stopped being enough. The OS releases visibility " +
+                                        "only after you pick the account in the system chooser once. " +
+                                        "Use 'Choose account (system picker)' below, or type the address.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
 
                     Row(
                         modifier = Modifier
@@ -201,7 +228,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Default.Settings, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("System picker")
+                            Text(if (state.accountsHiddenByOs) "Choose account (system picker)" else "System picker")
                         }
                         if (state.googleAccountName != null) {
                             OutlinedButton(onClick = { viewModel.unlinkAccount() }) {
@@ -680,11 +707,12 @@ private fun AccountPickerDialog(
                     Text(
                         if (!permissionGranted) {
                             "The app may not list accounts until you grant 'Find accounts on this " +
-                                "device'. Without it the list is always empty - that is the source of " +
-                                "the 'account is null' error."
+                                "device'."
                         } else {
-                            "Permission is granted but no account of type com.google was returned. Add " +
-                                "one under Settings > Accounts > Add account > Google, then reopen this list."
+                            "Permission is granted, but Android 8+ does not let an app targeting API 26+ " +
+                                "enumerate accounts, so this list is expected to be empty even when Gmail " +
+                                "and Drive can see several accounts. Use the system picker instead - " +
+                                "picking an account there makes it visible to this app permanently."
                         },
                         style = MaterialTheme.typography.bodySmall
                     )

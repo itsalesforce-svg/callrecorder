@@ -61,11 +61,19 @@ class DriveConnectionTester(private val context: Context) {
         // the sync works too. But without the permission the in-app account list stays empty, so
         // the user cannot pick an account - which is worth saying out loud.
         val permissionGranted = repository.hasAccountsPermission()
+        val visible = repository.googleAccounts()
+        val hiddenByOs = repository.visibilityRulesApply(context) && visible.isEmpty() &&
+            repository.hasGoogleAuthenticator()
         steps += TestStep(
             label = "Android 'Find accounts on this device' (GET_ACCOUNTS)",
             status = if (permissionGranted) StepStatus.PASS else StepStatus.SKIP,
-            detail = if (permissionGranted) {
-                "Granted. The app can list ${repository.totalAccountCount()} account(s) on this phone."
+            detail = if (permissionGranted && hiddenByOs) {
+                "Granted - but Android 8+ still withholds the account list from apps targeting API 26+, " +
+                    "so 0 accounts is the expected result even though Gmail and Drive see them all. The " +
+                    "platform only makes an account visible after you pick it in the system chooser; " +
+                    "typing the address is the alternative."
+            } else if (permissionGranted) {
+                "Granted. The app can see ${visible.size} Google account(s) on this phone."
             } else {
                 "Not granted: AccountManager returns an empty list, so 'Choose from this device' will " +
                     "show nothing and GoogleAuthUtil may fail to resolve the account. Grant it with the " +

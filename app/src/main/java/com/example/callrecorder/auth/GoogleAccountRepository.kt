@@ -4,13 +4,33 @@ import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
 import androidx.core.content.ContextCompat
+import com.example.callrecorder.debug.CallRecorderLog
 
 /**
  * Finds and resolves the Google account this app is allowed to use.
  *
  * Two facts drive the design (both were the cause of "account is null" in this app):
+ *
+ * THE MAIN REASON THIS APP SEES ZERO ACCOUNTS (verified, documented behaviour):
+ *
+ * Since **Android 8.0 (API 26)** `GET_ACCOUNTS` is *not enough*. From the
+ * `AccountManager.getAccountsByType` reference: "Caller targeting API level O and above, will get
+ * list of accounts made visible to it by user (see newChooseAccountIntent(...)) or
+ * AbstractAccountAuthenticator using setAccountVisibility(...)". The Android Developers Blog puts it
+ * plainly: "the GET_ACCOUNTS permission is no longer sufficient to gain access to the list of
+ * accounts registered on the device."
+ *
+ * Gmail/Drive/Play Store are signed by Google (the account type owner), so they see all accounts.
+ * This app targets SDK 35, so the OS shows it **nothing** until the user explicitly picks an account
+ * through the system chooser - that pick is what stores VISIBILITY_USER_MANAGED_VISIBLE for our
+ * package, permanently. See [frameworkChooserIntent].
+ *
+ * Secondary reasons this class also guards against:
  *
  * 1. `android.permission.GET_ACCOUNTS` is a **dangerous** permission (AOSP
  *    `core/res/AndroidManifest.xml`: `android:protectionLevel="dangerous"`, and since Android 6.0
@@ -67,6 +87,45 @@ class GoogleAccountRepository(private val context: Context) {
     }
 
     private val accountManager: AccountManager get() = AccountManager.get(context)
+
+    /**
+     * The **framework** account chooser (`AccountManager.newChooseAccountIntent`).
+     *
+     * This is the mechanism the platform documents for making accounts visible to an app that targets
+     * API 26+: "On success the activity returns a Bundle with the account name and type … Chosen
+     * account is marked as VISIBILITY_USER_MANAGED_VISIBLE to the caller … and will be returned to it
+     * in consequent getAccountsByType(String) calls."
+     *
+     * It is a different implementation from the Play services `AccountPicker`, needs no Google Play
+     * services, and is therefore the more robust of the two.
+     */
+    fun frameworkChooserIntent(): Intent? = runCatching {
+        AccountManager.newChooseAccountIntent(
+            /* selectedAccount = */ null,
+            /* allowableAccounts = */ null,
+            /* allowableAccountTypes = */ arrayOf(GOOGLE_ACCOUNT_TYPE),
+            /* alwaysPromptForAccount = */ true,
+            /* descriptionOverrideText = */ "Pick the Google account that should receive your call recordings.",
+            /* addAccountAuthTokenType = */ null,
+            /* addAccountRequiredFeatures = */ null,
+            /* addAccountOptions = */ Bundle()
+        )
+    }.onFailure { CallRecorderLog.e("ACCOUNTS", "framework chooser unavailable", it) }.getOrNull()
+
+    /** True when the com.google authenticator is installed (i.e. the accounts really do exist). */
+    fun hasGoogleAuthenticator(): Boolean = runCatching {
+        accountManager.getAuthenticatorTypes().any {
+            it.type == GOOGLE_ACCOUNT_TYPE || it.type == GMAIL_ACCOUNT_TYPE
+        }
+    }.getOrDefault(false)
+
+    /**
+     * Whether Android 8+ account visibility rules apply, i.e. an empty [googleAccounts] list is the
+     * *expected* state rather than a misconfiguration.
+     */
+    fun visibilityRulesApply(context: Context): Boolean = runCatching {
+        context.applicationInfo.targetSdkVersion >= Build.VERSION_CODES.O
+    }.getOrDefault(true)
 
     fun hasAccountsPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.GET_ACCOUNTS) ==
