@@ -2,7 +2,6 @@ package com.example.callrecorder.debug
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.content.pm.Signature
 import android.os.Build
 import java.security.MessageDigest
 
@@ -34,18 +33,25 @@ object AppSigning {
         val pkg = context.packageName
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val info = pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES)
-            info.signingInfo?.apkContentsSigners?.firstOrNull()?.toByteArray()
+            // Signature.toByteArray() exists; it is the *Signature* object we need, not a lambda.
+            info.signingInfo?.apkContentsSigners?.firstOrNull()?.let { sig -> sig.toByteArray() }
         } else {
             @Suppress("DEPRECATION")
             val info = pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES)
             @Suppress("DEPRECATION")
-            info.signatures?.firstOrNull()?.toByteArray()
+            info.signatures?.firstOrNull()?.let { sig -> sig.toByteArray() }
         }
     }.getOrNull()
 
-    /** True when this APK was signed with the well-known AOSP debug key. */
-    fun isDebugKeystore(context: Context): Boolean = runCatching {
-        signatureBytes(context)?.let { Signature(it.toByteArray()).hashCode() } != null &&
-            (sha1(context).startsWith("A4:0D:A8:C1") || sha1(context).startsWith("61:ED:37:7E"))
-    }.getOrDefault(false)
+    /**
+     * True when this APK carries the well-known AOSP debug certificate. Builds signed with a
+     * throwaway debug key are exactly the ones whose SHA-1 changes on every CI run, so it is worth
+     * saying so next to the fingerprint.
+     */
+    fun isDebugKeystore(context: Context): Boolean {
+        val value = sha1(context)
+        return DEBUG_SHA1_PREFIXES.any { value.startsWith(it) }
+    }
+
+    private val DEBUG_SHA1_PREFIXES = listOf("A4:0D:A8:C1", "61:ED:37:7E", "8C:5E:9E:4C")
 }
