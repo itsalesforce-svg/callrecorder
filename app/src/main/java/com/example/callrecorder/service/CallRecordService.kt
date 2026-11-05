@@ -130,6 +130,13 @@ class CallRecordService : Service() {
             CallRecorderLog.d("SERVICE", "already recording, ignoring start for $phoneNumber")
             return
         }
+
+        // This service is launched with startForegroundService from the call receiver, so the
+        // notification has to exist before any early return - otherwise the platform kills the app
+        // ("did not then call Service.startForeground()"), which used to look like the app vanishing
+        // mid-call.
+        promoteToForeground("Recording call: $phoneNumber")
+
         if (!AppPrefs.autoRecord(applicationContext)) {
             // The "Automatic Call Recording" switch on the Settings screen must actually gate work.
             CallRecorderLog.w("SERVICE", "automatic recording is disabled in Settings - not recording $phoneNumber")
@@ -137,6 +144,7 @@ class CallRecordService : Service() {
                 applicationContext,
                 "Automatic recording is switched OFF in Settings, so this call was not recorded."
             )
+            stopForegroundCompat()
             stopSelf()
             return
         }
@@ -150,6 +158,7 @@ class CallRecordService : Service() {
                 "Microphone permission is missing, so the call could not be recorded. Open the " +
                     "Permissions screen and grant the microphone."
             )
+            stopForegroundCompat()
             stopSelf()
             return
         }
@@ -158,16 +167,7 @@ class CallRecordService : Service() {
         currentPhoneNumber = phoneNumber
         startTimestamp = System.currentTimeMillis()
 
-        val notification = buildForegroundNotification("Recording call: $phoneNumber")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        promoteToForeground("Recording call: $phoneNumber")
 
         // Starting the recorder and verifying that it captures sound must not block the main thread
         // (a silence probe sleeps for over a second), so it runs on the service's IO scope.
@@ -284,6 +284,7 @@ class CallRecordService : Service() {
         }
         RecordingStorage.reportRecordingIssue(applicationContext, detail)
         CallRecorderLog.e("SERVICE", detail, lastError)
+        stopForegroundCompat()
         stopSelf()
     }
 
@@ -406,6 +407,24 @@ class CallRecordService : Service() {
 
     private fun resolveContactName(phone: String): String {
         return if (phone.length > 3) "Contact ($phone)" else "Unknown Contact"
+    }
+
+    private fun promoteToForeground(content: String) {
+        val notification = buildForegroundNotification(content)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun stopForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
     }
 
     private fun buildForegroundNotification(content: String): Notification {

@@ -98,17 +98,24 @@ class VoiceRecorderService : Service() {
             CallRecorderLog.d("VOICE", "already recording, ignoring start")
             return
         }
+
+        // A service launched with startForegroundService MUST post its notification within a few
+        // seconds; returning early without it makes the platform kill the app. So go foreground
+        // first and only then do the work that can fail.
+        startedAt = System.currentTimeMillis()
+        startForegroundCompat(buildNotification())
+
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
         if (!granted) {
             val message = "Microphone permission is missing, so nothing could be recorded."
             VoiceRecorderState.onFailed(message)
             CallRecorderLog.w("VOICE", message)
+            stopForegroundCompat()
             stopSelf()
             return
         }
 
-        startedAt = System.currentTimeMillis()
         val file = RecordingStorage.fileForVoice(applicationContext, category, startedAt)
         outputFile = file
 
@@ -137,11 +144,11 @@ class VoiceRecorderService : Service() {
             CallRecorderLog.e("VOICE", message, t)
             releaseRecorder()
             runCatching { file.delete() }
+            stopForegroundCompat()
             stopSelf()
             return
         }
 
-        startForegroundCompat(buildNotification())
         VoiceRecorderState.onStarted(startedAt, category)
         CallRecorderLog.d("VOICE", "recording ${VoiceCategory.label(category)} -> ${file.name}")
 
