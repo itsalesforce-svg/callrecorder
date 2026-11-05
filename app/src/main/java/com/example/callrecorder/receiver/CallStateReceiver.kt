@@ -27,7 +27,7 @@ class CallStateReceiver : BroadcastReceiver() {
             } else if (stateStr == TelephonyManager.EXTRA_STATE_IDLE) {
                 // Call disconnected or idle
                 val serviceIntent = Intent(context, CallRecordService::class.java).apply {
-                    action = CallRecordService.ACTION_STOP_RECORDING
+                    action = CallRecordService.ACTION_STOP_CALL_RECORDING
                 }
                 context.startService(serviceIntent)
             }

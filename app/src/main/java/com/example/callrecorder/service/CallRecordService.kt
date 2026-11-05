@@ -31,13 +31,20 @@ class CallRecordService : Service() {
     private var startTimestamp = 0L
     private var currentPhoneNumber = "Unknown"
     private var outputFilePath = ""
+    private var isVoiceRecording = false
+    private var voiceTitle = "Voice recording"
+    private var voiceCategory = "Meeting"
 
     private val serviceScope = CoroutineScope(Dispatchers.IO)
 
     companion object {
         const val ACTION_START_RECORDING = "com.example.callrecorder.ACTION_START_RECORDING"
         const val ACTION_STOP_RECORDING = "com.example.callrecorder.ACTION_STOP_RECORDING"
+        const val ACTION_STOP_CALL_RECORDING = "com.example.callrecorder.ACTION_STOP_CALL_RECORDING"
         const val EXTRA_PHONE_NUMBER = "extra_phone_number"
+        const val ACTION_START_VOICE_RECORDING = "com.example.callrecorder.ACTION_START_VOICE_RECORDING"
+        const val EXTRA_RECORDING_TITLE = "extra_recording_title"
+        const val EXTRA_RECORDING_CATEGORY = "extra_recording_category"
         private const val CHANNEL_ID = "call_recording_channel"
         private const val NOTIFICATION_ID = 1001
     }
@@ -53,8 +60,17 @@ class CallRecordService : Service() {
                 val phone = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown"
                 startCallRecording(phone)
             }
+            ACTION_START_VOICE_RECORDING -> {
+                voiceTitle = intent.getStringExtra(EXTRA_RECORDING_TITLE)?.trim()
+                    ?.takeIf { it.isNotEmpty() } ?: "Voice recording"
+                voiceCategory = intent.getStringExtra(EXTRA_RECORDING_CATEGORY) ?: "Meeting"
+                startVoiceRecording()
+            }
             ACTION_STOP_RECORDING -> {
                 stopCallRecording()
+            }
+            ACTION_STOP_CALL_RECORDING -> {
+                if (!isVoiceRecording) stopCallRecording()
             }
         }
         return START_NOT_STICKY
@@ -63,9 +79,27 @@ class CallRecordService : Service() {
     private fun startCallRecording(phoneNumber: String) {
         if (isRecording) return
         currentPhoneNumber = phoneNumber
+        isVoiceRecording = false
+        startRecording()
+    }
+
+    private fun startVoiceRecording() {
+        if (isRecording) return
+        currentPhoneNumber = ""
+        isVoiceRecording = true
+        startRecording()
+    }
+
+    private fun startRecording() {
+        if (isRecording) return
         startTimestamp = System.currentTimeMillis()
 
-        val notification = buildForegroundNotification("Recording call: $phoneNumber")
+        val notificationText = if (isVoiceRecording) {
+            "Recording $voiceCategory: $voiceTitle"
+        } else {
+            "Recording call: $currentPhoneNumber"
+        }
+        val notification = buildForegroundNotification(notificationText)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -81,7 +115,10 @@ class CallRecordService : Service() {
                 if (!exists()) mkdirs()
             }
             val timeStampStr = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val audioFile = File(storageDir, "CALL_${phoneNumber}_${timeStampStr}.m4a")
+            val prefix = if (isVoiceRecording) "VOICE" else "CALL"
+            val safeName = (if (isVoiceRecording) voiceTitle else currentPhoneNumber)
+                .replace(Regex("[^A-Za-z0-9_-]"), "_").take(40)
+            val audioFile = File(storageDir, "${prefix}_${safeName}_$timeStampStr.m4a")
             outputFilePath = audioFile.absolutePath
 
             mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -90,7 +127,10 @@ class CallRecordService : Service() {
                 @Suppress("DEPRECATION")
                 MediaRecorder()
             }.apply {
-                setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
+                setAudioSource(
+                    if (isVoiceRecording) MediaRecorder.AudioSource.MIC
+                    else MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                )
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 setAudioEncodingBitRate(128000)
@@ -103,6 +143,9 @@ class CallRecordService : Service() {
             isRecording = true
         } catch (e: Exception) {
             e.printStackTrace()
+            mediaRecorder?.release()
+            mediaRecorder = null
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
@@ -127,13 +170,14 @@ class CallRecordService : Service() {
             serviceScope.launch {
                 val db = AppDatabase.getDatabase(applicationContext)
                 val entity = CallRecordEntity(
-                    contactName = resolveContactName(currentPhoneNumber),
-                    phoneNumber = currentPhoneNumber,
-                    callType = "INCOMING", // Resolved by call log or receiver state
+                    contactName = if (isVoiceRecording) voiceTitle else resolveContactName(currentPhoneNumber),
+                    phoneNumber = if (isVoiceRecording) voiceCategory else currentPhoneNumber,
+                    callType = if (isVoiceRecording) "VOICE" else "INCOMING",
                     timestamp = startTimestamp,
                     durationSeconds = durationSeconds,
                     filePath = outputFilePath,
-                    isSynced = false
+                    isSynced = false,
+                    recordingType = if (isVoiceRecording) "VOICE" else "CALL"
                 )
                 db.callRecordDao().insertRecord(entity)
 
@@ -162,7 +206,7 @@ class CallRecordService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Call Recorder Active")
+            .setContentTitle(if (isVoiceRecording) "Voice Recorder Active" else "Call Recorder Active")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)

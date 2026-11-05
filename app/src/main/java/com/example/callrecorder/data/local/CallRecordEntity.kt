@@ -1,5 +1,6 @@
 package com.example.callrecorder.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -17,5 +18,8 @@ data class CallRecordEntity(
     val timestamp: Long,
     val durationSeconds: Long,
     val filePath: String,
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+    /** CALL for telephony recordings; VOICE for meetings, interviews, and other mic recordings. */
+    @ColumnInfo(defaultValue = "'CALL'")
+    val recordingType: String = "CALL"
 )
