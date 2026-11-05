@@ -37,8 +37,9 @@ fun PermissionWithSettingsCheck(
 ) {
     val context = LocalContext.current
 
-    val requiredPermissions = remember {
-        buildList {
+    // permission -> why it is needed
+    val requiredPermissions: List<Pair<String, String>> = remember {
+        buildList<Pair<String, String>> {
             add(Manifest.permission.READ_PHONE_STATE to "Detects call state (OFFHOOK / IDLE).")
             add(Manifest.permission.RECORD_AUDIO to "Needed by the foreground recording service.")
             add(Manifest.permission.READ_CALL_LOG to "Resolves the name and number for each record.")
@@ -52,14 +53,18 @@ fun PermissionWithSettingsCheck(
     }
 
     var refreshKey by remember { mutableStateOf(0) }
-    val granted = remember(refreshKey) {
-        requiredPermissions.associate { (permission, _) ->
-            permission to ContextCompat.checkSelfPermission(
-                context, permission
+    // Recomputed whenever refreshKey changes -> reads the real grant state from the platform.
+    val granted: Map<String, Boolean> = remember(refreshKey, requiredPermissions) {
+        requiredPermissions.associate { entry ->
+            val isGranted = ContextCompat.checkSelfPermission(
+                context, entry.first
             ) == PackageManager.PERMISSION_GRANTED
+            Pair(entry.first, isGranted)
         }
     }
-    val missing = requiredPermissions.filter { granted[it.first] != true }.map { it.first }
+    val missing: List<String> = requiredPermissions
+        .map { it.first }
+        .filter { granted[it] != true }
 
     val requestLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
