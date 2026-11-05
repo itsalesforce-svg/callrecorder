@@ -27,7 +27,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val storagePath = remember(context) { RecordingStorage.directory(context).absolutePath }
     var accountEmailDraft by remember(state.googleAccountName) {
-        mutableStateOf(state.googleAccountName.orEmpty())
+        mutableStateOf(state.googleAccountName ?: "itsalesforce@gmail.com")
     }
     var accountMessage by remember { mutableStateOf<String?>(null) }
 
@@ -129,7 +129,7 @@ fun SettingsScreen(
                             val email = accountEmailDraft.trim()
                             if (email.contains('@')) {
                                 viewModel.setGoogleAccountName(email)
-                                accountMessage = "Account saved. Tap Sync now to test Drive access."
+                                accountMessage = "Account saved. Tap Test Drive connection to verify access."
                             } else {
                                 accountMessage = "Enter a valid Google account email."
                             }
@@ -143,6 +143,43 @@ fun SettingsScreen(
                     }
                     accountMessage?.let { message ->
                         Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = viewModel::testDriveConnection,
+                        enabled = !state.googleAccountName.isNullOrBlank() && !state.isDriveTestRunning,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (state.isDriveTestRunning) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        } else {
+                            Icon(Icons.Default.CloudSync, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (state.isDriveTestRunning) "Testing Drive connection…" else "Test Drive connection")
+                    }
+                    val connectionColor = when (state.driveConnected) {
+                        true -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
+                        false -> MaterialTheme.colorScheme.error
+                        null -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = when (state.driveConnected) {
+                                true -> Icons.Default.CheckCircle
+                                false -> Icons.Default.Error
+                                null -> Icons.Default.HelpOutline
+                            },
+                            contentDescription = null,
+                            tint = connectionColor
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            state.driveConnectionMessage ?: "Drive connection has not been tested.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = connectionColor
+                        )
                     }
 
                     HorizontalDivider(Modifier.padding(vertical = 12.dp))

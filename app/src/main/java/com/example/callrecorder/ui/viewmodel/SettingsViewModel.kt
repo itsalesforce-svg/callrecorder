@@ -3,7 +3,12 @@ package com.example.callrecorder.ui.viewmodel
 import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.callrecorder.auth.GoogleAuthManager
 import com.example.callrecorder.worker.SyncScheduler
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +20,10 @@ data class SettingsUiState(
     val autoSyncEnabled: Boolean = false,
     val googleAccountName: String? = null,
     val syncMessage: String? = null,
-    val callRecordingIssue: String? = null
+    val callRecordingIssue: String? = null,
+    val isDriveTestRunning: Boolean = false,
+    val driveConnected: Boolean? = null,
+    val driveConnectionMessage: String? = null
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -66,9 +74,54 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         accountPrefs.edit().putString("google_account_name", accountName).apply()
         _uiState.value = _uiState.value.copy(
             googleAccountName = accountName,
-            syncMessage = "Google account selected. Tap Sync now to test the connection."
+            syncMessage = "Google account saved. Test Drive access before enabling sync.",
+            driveConnected = null,
+            driveConnectionMessage = null
         )
         updatePeriodicSync()
+    }
+
+    fun testDriveConnection() {
+        val email = _uiState.value.googleAccountName
+        if (email.isNullOrBlank()) {
+            _uiState.value = _uiState.value.copy(
+                driveConnected = false,
+                driveConnectionMessage = "Save a Google account first."
+            )
+            return
+        }
+
+        _uiState.value = _uiState.value.copy(
+            isDriveTestRunning = true,
+            driveConnected = null,
+            driveConnectionMessage = "Checking Google Drive access…"
+        )
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val drive = GoogleAuthManager(getApplication()).getGoogleDriveService()
+                        ?: error("No Google account is configured.")
+                    drive.about().get().setFields("user(emailAddress)").execute()
+                        .user?.emailAddress ?: email
+                }
+            }
+            _uiState.value = if (result.isSuccess) {
+                _uiState.value.copy(
+                    isDriveTestRunning = false,
+                    driveConnected = true,
+                    driveConnectionMessage = "Connected to Google Drive as ${result.getOrNull()}."
+                )
+            } else {
+                _uiState.value.copy(
+                    isDriveTestRunning = false,
+                    driveConnected = false,
+                    driveConnectionMessage = result.exceptionOrNull()?.localizedMessage
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { "Drive connection failed: $it" }
+                        ?: "Drive connection failed. Check the account, network, and Google Drive authorization."
+                )
+            }
+        }
     }
 
     fun syncNow(): Boolean {
