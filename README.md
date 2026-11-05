@@ -153,3 +153,29 @@ these now writes to the debug log *and* to the Settings card:
 Use **Run self-test** (it records straight to the microphone) to find out whether this Android build
 can capture audio at all, and with which source. If `MIC` works but the call is silent, the OS is
 blocking call audio — that is a platform limitation, not a bug in the app.
+
+## Why the app cannot see the Google accounts that Gmail and Drive use
+
+This is **documented platform behaviour**, not a bug in the phone or in the permission:
+
+- `AccountManager.getAccountsByType` reference: *"Caller targeting API level O and above, will get
+  list of accounts made visible to it by user (see `newChooseAccountIntent`) or by
+  `AbstractAccountAuthenticator` using `setAccountVisibility`."*
+- Android Developers Blog (Android O changes): *"the `GET_ACCOUNTS` permission is no longer
+  sufficient to gain access to the list of accounts registered on the device."*
+
+Gmail, Drive and the Play Store are signed by Google, i.e. by the app that owns the `com.google`
+account type, so they see every account on the device. Call Recorder targets SDK 35, so the OS returns
+an **empty list** to it regardless of the granted permission. The old message ("no Google account found
+on this phone") reported that platform rule as a problem with the phone.
+
+### The one action that lifts it
+
+Tap **Choose account (system picker)** — `AccountManager.newChooseAccountIntent()`. From the reference:
+*"Chosen account is marked as `VISIBILITY_USER_MANAGED_VISIBLE` to the caller … and will be returned to
+it in consequent `getAccountsByType(String)` calls."* The pick is persisted for this package by the
+system, so it is needed **once**; afterwards the in-app list works normally. Typing the address still
+works without it, because the credential is built from an `Account` object rather than by enumerating.
+
+The Settings screen now states which of the two situations you are in: permission missing, accounts
+hidden by Android 8+ visibility rules, or accounts genuinely visible.
