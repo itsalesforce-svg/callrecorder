@@ -21,6 +21,7 @@ import com.example.callrecorder.data.local.CallRecordEntity
 import com.example.callrecorder.worker.SyncScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
@@ -32,6 +33,14 @@ class CallRecordService : Service() {
     private var startTimestamp = 0L
     private var currentPhoneNumber = "Unknown"
     private var outputFilePath = ""
+
+    /**
+     * Set when the call ends or the service dies. The start loop sleeps for a warm-up window and then
+     * may try other audio sources; without this it would happily open a fresh recorder for a call that
+     * is already over.
+     */
+    @Volatile
+    private var recordingStopped = false
 
     private val serviceScope = CoroutineScope(Dispatchers.IO)
 
@@ -91,6 +100,7 @@ class CallRecordService : Service() {
             stopSelf()
             return
         }
+        recordingStopped = false
         currentPhoneNumber = phoneNumber
         startTimestamp = System.currentTimeMillis()
 
@@ -105,31 +115,100 @@ class CallRecordService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // Android 10+ blocks third-party apps from capturing the call stream for most devices, so a
-        // hard-coded VOICE_COMMUNICATION silently produced nothing. Try the configured source, then
-        // fall back to the microphone, and tell the user in Settings if both fail.
+        // Starting the recorder and verifying that it captures sound must not block the main thread
+        // (a silence probe sleeps for over a second), so it runs on the service's IO scope.
+        serviceScope.launch { startRecorderWithFallback(phoneNumber) }
+    }
+
+    /**
+     * Tries audio sources until one both *starts* and *produces sound*.
+     *
+     * The second condition is what was missing. On Android 9 a third-party app can start
+     * `VOICE_COMMUNICATION` successfully and still record pure silence: `prepare()`/`start()` never
+     * throw, so the old fallback never ran, and the result was a valid MP4 with no audible audio -
+     * indistinguishable from "the recorder is gone". `getMaxAmplitude()` is the only on-device signal
+     * that separates "recording" from "recording silence", so it is checked after a short warm-up.
+     */
+    private fun startRecorderWithFallback(phoneNumber: String) {
         val preferred = audioSourceFromString(AppPrefs.audioSource(applicationContext))
+        val candidates = (listOf(preferred) + listOf(
+            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            MediaRecorder.AudioSource.CAMCORDER,
+            MediaRecorder.AudioSource.VOICE_CALL
+        )).distinct()
+
         var lastError: Throwable? = null
-        for (source in listOf(preferred, MediaRecorder.AudioSource.MIC).distinct()) {
+        val silentSources = mutableListOf<String>()
+        for (source in candidates) {
+            if (recordingStopped) {
+                CallRecorderLog.d("SERVICE", "call ended during source selection - stopping at $source")
+                return
+            }
             try {
                 startRecorderWith(phoneNumber, source)
                 isRecording = true
-                AppPrefs.setLastRecordingIssue(applicationContext, null)
-                CallRecorderLog.d("SERVICE", "recording started with source=$source -> $outputFilePath")
-                return
+                outputFilePath.let { CallRecorderLog.d("SERVICE", "source=$source started -> $it") }
+
+                // Warm-up: encoders emit nothing for the first few hundred milliseconds.
+                Thread.sleep(1200)
+                if (recordingStopped) {
+                    runCatching { mediaRecorder?.stop() }
+                    runCatching { mediaRecorder?.release() }
+                    mediaRecorder = null
+                    isRecording = false
+                    CallRecorderLog.d("SERVICE", "call ended during warm-up - recorder released")
+                    return
+                }
+                val peak = runCatching { mediaRecorder?.maxAmplitude ?: 0 }.getOrDefault(0)
+                CallRecorderLog.d("SERVICE", "source=$source peak amplitude after warm-up: $peak")
+                if (peak > 0) {
+                    AppPrefs.setLastRecordingIssue(applicationContext, null)
+                    AppPrefs.setAudioSource(applicationContext, audioSourceName(source))
+                    CallRecorderLog.d("SERVICE", "CONFIRMED audio capture with source=$source (peak=$peak)")
+                    return
+                }
+
+                // Started but deaf. Keep the bytes only if every other source fails too.
+                releaseRecorder()
+                isRecording = false
+                val stale = File(outputFilePath)
+                CallRecorderLog.w(
+                    "SERVICE",
+                    "source=$source captured SILENCE (peak=0, ${stale.length()}B) - trying the next source"
+                )
+                silentSources += audioSourceName(source)
+                stale.delete()
             } catch (t: Throwable) {
                 lastError = t
                 CallRecorderLog.e("SERVICE", "recorder failed with source=$source", t)
                 releaseRecorder()
+                isRecording = false
             }
         }
-        RecordingStorage.reportRecordingIssue(
-            applicationContext,
-            "Recorder could not start (${lastError?.javaClass?.simpleName}: ${lastError?.message}). " +
-                "Pick another audio source in Settings, close other mic-using apps, and check the " +
-                "Microphone permission."
-        )
+
+        val detail = when {
+            silentSources.isNotEmpty() && lastError == null ->
+                "Every audio source started but captured silence (${silentSources.joinToString()}). " +
+                    "This Android build (API ${Build.VERSION.SDK_INT}) does not allow third-party apps " +
+                    "to record call audio. Use the speakerphone setting, or record only your side."
+            else ->
+                "Recorder could not start (${lastError?.javaClass?.simpleName}: ${lastError?.message}). " +
+                    "Close other apps that use the microphone and check the Microphone permission."
+        }
+        RecordingStorage.reportRecordingIssue(applicationContext, detail)
+        CallRecorderLog.e("SERVICE", detail, lastError)
         stopSelf()
+    }
+
+    private fun audioSourceName(source: Int): String = when (source) {
+        MediaRecorder.AudioSource.MIC -> "MIC"
+        MediaRecorder.AudioSource.CAMCORDER -> "CAMCORDER"
+        MediaRecorder.AudioSource.VOICE_RECOGNITION -> "VOICE_RECOGNITION"
+        MediaRecorder.AudioSource.VOICE_CALL -> "VOICE_CALL"
+        MediaRecorder.AudioSource.VOICE_COMMUNICATION -> "VOICE_COMMUNICATION"
+        else -> source.toString()
     }
 
     @Suppress("DEPRECATION")
@@ -167,6 +246,7 @@ class CallRecordService : Service() {
     }
 
     private fun stopCallRecording() {
+        recordingStopped = true
         if (!isRecording) {
             stopSelf()
             return
@@ -261,6 +341,8 @@ class CallRecordService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        recordingStopped = true
+        serviceScope.cancel()
         CallRecorderLog.d("SERVICE", "onDestroy (isRecording=$isRecording)")
         mediaRecorder?.release()
         mediaRecorder = null

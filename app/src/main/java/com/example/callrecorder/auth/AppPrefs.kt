@@ -157,8 +157,18 @@ object AppPrefs {
     fun setAutoRecord(context: Context, value: Boolean) =
         prefs(context).edit().putBoolean(KEY_AUTO_RECORD, value).apply()
 
+    /**
+     * Default audio source.
+     *
+     * `VOICE_COMMUNICATION` used to be the default because it is the call-tuned stream. On Android 9
+     * (API 28) and older, a third-party app can open it without any error and still receive pure
+     * silence, so the recording looked successful while containing nothing audible. `MIC` starts on
+     * essentially every build and captures at least the near side of the conversation, and the
+     * service now *verifies* audio with `getMaxAmplitude()` and promotes whichever source actually
+     * produced sound (see CallRecordService.startRecorderWithFallback).
+     */
     fun audioSource(context: Context): String =
-        prefs(context).getString(KEY_AUDIO_SOURCE, "VOICE_COMMUNICATION") ?: "VOICE_COMMUNICATION"
+        prefs(context).getString(KEY_AUDIO_SOURCE, "MIC") ?: "MIC"
 
     fun setAudioSource(context: Context, value: String) =
         prefs(context).edit().putString(KEY_AUDIO_SOURCE, value).apply()

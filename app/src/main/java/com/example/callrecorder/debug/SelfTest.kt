@@ -52,6 +52,7 @@ object SelfTest {
         )
 
         var lastError: String? = null
+        val silentSources = mutableListOf<String>()
         for ((name, source) in sources) {
             val target = File(RecordingStorage.directory(app), "SELFTEST_${System.currentTimeMillis()}_$name.m4a")
             var recorder: MediaRecorder? = null
@@ -70,20 +71,38 @@ object SelfTest {
                 recorder.prepare()
                 recorder.start()
                 CallRecorderLog.d("SELFTEST", "recording with $name into ${target.name}")
-                Thread.sleep(seconds * 1000L)
+
+                // Sample the live amplitude: a silent capture still writes a perfectly valid MP4, so
+                // the file size alone proves nothing. This is the check that distinguishes "the
+                // encoder ran" from "the microphone produced sound".
+                var peak = 0
+                val deadline = System.currentTimeMillis() + seconds * 1000L
+                while (System.currentTimeMillis() < deadline) {
+                    val sample = runCatching { recorder.maxAmplitude }.getOrDefault(0)
+                    if (sample > peak) peak = sample
+                    Thread.sleep(100)
+                }
                 runCatching { recorder.stop() }
                 runCatching { recorder.release() }
                 recorder = null
 
                 val size = target.length()
-                CallRecorderLog.d("SELFTEST", "$name produced $size bytes")
-                if (size > 1000) {
+                CallRecorderLog.d("SELFTEST", "$name produced $size bytes, peak amplitude $peak")
+                if (peak > 0) {
                     AppPrefs.setAudioSource(app, name)
-                    CallRecorderLog.d("SELFTEST", "SUCCESS with $name; saved as preferred audio source")
-                    return@withContext Outcome(true, "Capture works with $name.", target)
+                    CallRecorderLog.d("SELFTEST", "SUCCESS with $name (peak=$peak); saved as preferred audio source")
+                    return@withContext Outcome(true, "Capture works with $name (peak level $peak).", target)
                 }
-                lastError = "$name produced an empty file (${size}B) - the OS is blocking call/voice capture"
-                target.delete()
+                if (size > 1000) {
+                    // Started, wrote bytes, heard nothing - the Android 9 failure mode.
+                    silentSources += name
+                    CallRecorderLog.w("SELFTEST", "$name captured SILENCE (${size}B, peak=0)")
+                    lastError = "$name started but captured silence"
+                    target.delete()
+                } else {
+                    lastError = "$name produced an empty file (${size}B)"
+                    target.delete()
+                }
             } catch (t: Throwable) {
                 lastError = "$name failed: ${t.javaClass.simpleName}: ${t.message}"
                 CallRecorderLog.e("SELFTEST", "source $name failed", t)
@@ -96,7 +115,17 @@ object SelfTest {
             }
         }
 
-        Outcome(false, lastError ?: "No audio source could start.", null)
+        val message = when {
+            silentSources.isNotEmpty() -> {
+                "Every source started but none captured sound (${silentSources.joinToString()}). " +
+                    "Run the test again while speaking, or with the phone's microphone unobstructed. " +
+                    "If it still reports silence, this Android build (API ${Build.VERSION.SDK_INT}) " +
+                    "does not let third-party apps record call audio."
+            }
+            else -> lastError ?: "No audio source could start."
+        }
+        CallRecorderLog.w("SELFTEST", "recordSample failed: $message")
+        Outcome(false, message, null)
     }
 
     /** Lists every account the app is allowed to see, and probes the OAuth scope string. */
