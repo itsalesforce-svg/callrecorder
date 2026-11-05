@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.callrecorder.data.local.CallRecordEntity
@@ -430,13 +432,29 @@ fun CallRecordItem(record: CallRecordEntity, isPlaying: Boolean, onPlayToggle: (
             }
             Spacer(Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (isVoice) Icons.Default.Schedule else Icons.Default.CallReceived, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.outline)
+                Icon(
+                    if (isVoice) Icons.Default.Schedule
+                    else if (record.callType == "OUTGOING") Icons.Default.CallMade else Icons.Default.CallReceived,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.outline
+                )
                 Spacer(Modifier.width(5.dp))
                 Text("$dateStr  ·  ${formatDuration(record.durationSeconds)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 Spacer(Modifier.weight(1f))
                 Icon(if (record.isSynced) Icons.Default.CloudDone else Icons.Default.CloudQueue, contentDescription = if (record.isSynced) "Synced" else "Local only", modifier = Modifier.size(15.dp), tint = if (record.isSynced) Color(0xFF2E7D32) else MaterialTheme.colorScheme.outline)
                 Spacer(Modifier.width(4.dp))
                 Text(if (record.isSynced) "Synced" else "On device", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            }
+            Spacer(Modifier.height(4.dp))
+            SelectionContainer {
+                Text(
+                    "Location: ${record.filePath}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

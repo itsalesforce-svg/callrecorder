@@ -12,7 +12,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.callrecorder.MainActivity
-import com.example.callrecorder.R
+import com.example.callrecorder.data.RecordingStorage
 import com.example.callrecorder.data.local.AppDatabase
 import com.example.callrecorder.data.local.CallRecordEntity
 import com.example.callrecorder.worker.SyncScheduler
@@ -30,6 +30,7 @@ class CallRecordService : Service() {
     private var isRecording = false
     private var startTimestamp = 0L
     private var currentPhoneNumber = "Unknown"
+    private var currentCallType = "OUTGOING"
     private var outputFilePath = ""
     private var isVoiceRecording = false
     private var voiceTitle = "Voice recording"
@@ -42,6 +43,7 @@ class CallRecordService : Service() {
         const val ACTION_STOP_RECORDING = "com.example.callrecorder.ACTION_STOP_RECORDING"
         const val ACTION_STOP_CALL_RECORDING = "com.example.callrecorder.ACTION_STOP_CALL_RECORDING"
         const val EXTRA_PHONE_NUMBER = "extra_phone_number"
+        const val EXTRA_CALL_TYPE = "extra_call_type"
         const val ACTION_START_VOICE_RECORDING = "com.example.callrecorder.ACTION_START_VOICE_RECORDING"
         const val EXTRA_RECORDING_TITLE = "extra_recording_title"
         const val EXTRA_RECORDING_CATEGORY = "extra_recording_category"
@@ -58,7 +60,8 @@ class CallRecordService : Service() {
         when (intent?.action) {
             ACTION_START_RECORDING -> {
                 val phone = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown"
-                startCallRecording(phone)
+                val callType = intent.getStringExtra(EXTRA_CALL_TYPE) ?: "OUTGOING"
+                startCallRecording(phone, callType)
             }
             ACTION_START_VOICE_RECORDING -> {
                 voiceTitle = intent.getStringExtra(EXTRA_RECORDING_TITLE)?.trim()
@@ -76,9 +79,10 @@ class CallRecordService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startCallRecording(phoneNumber: String) {
+    private fun startCallRecording(phoneNumber: String, callType: String) {
         if (isRecording) return
         currentPhoneNumber = phoneNumber
+        currentCallType = callType
         isVoiceRecording = false
         startRecording()
     }
@@ -99,20 +103,20 @@ class CallRecordService : Service() {
         } else {
             "Recording call: $currentPhoneNumber"
         }
-        val notification = buildForegroundNotification(notificationText)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-
         try {
-            val storageDir = File(getExternalFilesDir(null), "CallRecordings").apply {
-                if (!exists()) mkdirs()
+            val notification = buildForegroundNotification(notificationText)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+
+            val storageDir = RecordingStorage.directory(this).apply {
+                if (!exists() && !mkdirs()) error("Could not create recordings folder: $absolutePath")
             }
             val timeStampStr = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val prefix = if (isVoiceRecording) "VOICE" else "CALL"
@@ -141,8 +145,19 @@ class CallRecordService : Service() {
             }
 
             isRecording = true
+            if (!isVoiceRecording) {
+                getSharedPreferences("call_recorder_settings", MODE_PRIVATE)
+                    .edit().remove("last_call_recording_issue").apply()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            if (!isVoiceRecording) {
+                getSharedPreferences("call_recorder_settings", MODE_PRIVATE).edit()
+                    .putString(
+                        "last_call_recording_issue",
+                        "Could not start call recording: ${e.message ?: "microphone service unavailable"}. Android or the phone carrier may block call audio capture."
+                    ).apply()
+            }
             mediaRecorder?.release()
             mediaRecorder = null
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -172,7 +187,7 @@ class CallRecordService : Service() {
                 val entity = CallRecordEntity(
                     contactName = if (isVoiceRecording) voiceTitle else resolveContactName(currentPhoneNumber),
                     phoneNumber = if (isVoiceRecording) voiceCategory else currentPhoneNumber,
-                    callType = if (isVoiceRecording) "VOICE" else "INCOMING",
+                    callType = if (isVoiceRecording) "VOICE" else currentCallType,
                     timestamp = startTimestamp,
                     durationSeconds = durationSeconds,
                     filePath = outputFilePath,
@@ -181,8 +196,16 @@ class CallRecordService : Service() {
                 )
                 db.callRecordDao().insertRecord(entity)
 
-                // Schedule background cloud sync via WorkManager
-                SyncScheduler.scheduleImmediateSync(applicationContext)
+                // Upload new recordings automatically only when the user enabled it and selected an account.
+                val syncPreferences = getSharedPreferences("call_recorder_settings", MODE_PRIVATE)
+                val driveAccount = getSharedPreferences("call_recorder_prefs", MODE_PRIVATE)
+                    .getString("google_account_name", null)
+                if (syncPreferences.getBoolean("auto_sync_enabled", false) && !driveAccount.isNullOrBlank()) {
+                    SyncScheduler.scheduleImmediateSync(
+                        applicationContext,
+                        requireWifi = syncPreferences.getBoolean("sync_wifi_only", true)
+                    )
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -210,8 +233,9 @@ class CallRecordService : Service() {
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
+            .setSilent(true)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
 

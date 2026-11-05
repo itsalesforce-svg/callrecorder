@@ -26,13 +26,16 @@ class GoogleDriveSyncWorker(
         val driveService = authManager.getGoogleDriveService() ?: return Result.retry()
         val uploader = GoogleDriveUploader(driveService)
 
+        var uploadFailed = false
         for (record in unsyncedList) {
             val success = uploader.uploadCallAudio(record.filePath, record.phoneNumber, record.timestamp)
             if (success) {
                 dao.updateSyncStatus(record.id, true)
+            } else {
+                uploadFailed = true
             }
         }
 
-        return Result.success()
+        return if (uploadFailed) Result.retry() else Result.success()
     }
 }

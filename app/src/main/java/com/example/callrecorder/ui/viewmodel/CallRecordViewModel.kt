@@ -112,7 +112,13 @@ class CallRecordViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun triggerCloudSync() {
-        SyncScheduler.scheduleImmediateSync(getApplication())
+        val context = getApplication<Application>()
+        val account = context.getSharedPreferences("call_recorder_prefs", android.content.Context.MODE_PRIVATE)
+            .getString("google_account_name", null)
+        if (account.isNullOrBlank()) return
+        val requireWifi = context.getSharedPreferences("call_recorder_settings", android.content.Context.MODE_PRIVATE)
+            .getBoolean("sync_wifi_only", true)
+        SyncScheduler.scheduleImmediateSync(context, requireWifi = requireWifi)
     }
 
     override fun onCleared() {
