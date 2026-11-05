@@ -1,0 +1,6 @@
+Target Architecture: Native Android (Kotlin & Jetpack Compose)
+Target SDK: API 34 / 35
+Reference App: Total Recall (Killer Mobile)
+Room Database: 2.6.1 with KSP
+Background Sync: WorkManager 2.9.1
+Cloud Storage: Google Drive REST API v3
