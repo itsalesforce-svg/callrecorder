@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.Manifest
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
@@ -15,6 +16,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -567,12 +569,34 @@ fun SettingsScreen(
                         Spacer(Modifier.width(6.dp))
                         Text("Copy package + SHA-1")
                     }
+                    TextButton(
+                        onClick = {
+                            val opened = runCatching {
+                                context.startActivity(
+                                    Intent(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse("https://console.cloud.google.com/apis/credentials")
+                                    )
+                                )
+                            }.isSuccess
+                            if (!opened) {
+                                copyToClipboard(
+                                    context,
+                                    "Package name: ${context.packageName}\nSHA-1: ${state.signingSha1}"
+                                )
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Default.OpenInNew, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Open Cloud Console credentials")
+                    }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Cloud Console > APIs & Services > Credentials > Create credentials > OAuth client " +
-                            "ID > Android needs exactly this package name and SHA-1. Each GitHub Actions " +
-                            "build is signed with a new debug key, so a new download needs the new SHA-1 " +
-                            "unless the workflow has the stable keystore set up.",
+                        "Create credentials > OAuth client ID > Android needs exactly the package name " +
+                            "and SHA-1 above, and it must be the same Cloud project where 'Google Drive " +
+                            "API' is enabled. The workflow now keeps the debug keystore in the Actions " +
+                            "cache, so this SHA-1 stays valid for every future build - register it once.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.outline
                     )

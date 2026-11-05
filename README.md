@@ -180,6 +180,17 @@ works without it, because the credential is built from an `Account` object rathe
 The Settings screen now states which of the two situations you are in: permission missing, accounts
 hidden by Android 8+ visibility rules, or accounts genuinely visible.
 
+**Verified on device** (OPPO CPH1859, Android 9): after one pick in the system chooser the log reads
+
+```
+permission=true visible=0 ... hiddenByOs=true      <- before
+accounts visible to this app: 1
+  - itsalesforce@gmail.com (com.google)            <- after
+resolve=itsalesforce@gmail.com -> EXACT device account itsalesforce@gmail.com (com.google)
+```
+
+So the account problem is closed; the remaining `UnregisteredOnApiConsole` is a separate gate.
+
 ### Android 9 (API 28) specifics
 
 The confirmed test device runs **Android 9 / API 28**. Everything in the two sections above applies in
@@ -198,3 +209,44 @@ and three API-28 details are worth knowing:
   therefore samples `getMaxAmplitude()` after a 1.2 s warm-up and accepts a source only if it captured
   sound, promoting whatever worked. `MIC` is now the default; on Android 9 that normally captures the
   near side of the conversation only.
+
+## The one remaining gate: registering the signing key
+
+`UnregisteredOnApiConsole` means Google Play services found **no Android OAuth client** matching this
+APK's package name + signing SHA-1. Nothing in the app can bypass it: the legacy `GoogleAuthUtil` flow
+carries no client id, so Play services does the lookup itself and refuses before the account, the scope
+or any app setting is considered. This is the only step that has to happen outside the code.
+
+### It is now a one-time step
+
+The workflow keeps `~/.android/debug.keystore` in the GitHub Actions cache (`android-debug-keystore-v1`).
+The first run with this workflow creates the key and caches it; every later run restores the same file,
+so **the SHA-1 stops changing**. Register it once and it stays valid for every future download.
+
+1. Install the newest APK.
+2. **Settings > Debug & Diagnostics**: read `package:` and `SHA-1:`, or tap **Copy package + SHA-1**,
+   or tap **Open Cloud Console credentials** to go straight to the right page.
+3. In the **same project** where *Google Drive API* is enabled: *Create credentials > OAuth client ID >
+   Android*, paste the package name and the SHA-1.
+4. **Test Drive connection** — step 2 should now report the token as issued.
+
+If the cache is ever evicted, the run prints a warning and a new SHA-1; registering the new value takes
+a minute. To make it independent of the cache entirely, store a keystore as the secret
+`DEBUG_KEYSTORE_BASE64` (commands below) and it always wins.
+
+The cached keystore was introduced after the build that produced `9A:D1:4B:E4:...`, so the next APK
+reports a **new** SHA-1. That is the last time it changes.
+
+## OPPO / ColorOS (and other aggressive OEM skins)
+
+The test device is an OPPO CPH1859 running ColorOS, which kills background components far more
+eagerly than stock Android 9. If calls are not recorded while the app is not open, enable for this app:
+
+- **Settings > Battery > App battery management / Auto-start**: allow auto-start and background
+  activity (`com.example.callrecorder`).
+- **Recent apps > lock the card** so ColorOS does not purge it.
+- Do not use "Force stop" or a cleaner app on it — that cancels the `PHONE_STATE` receiver until the
+  app is opened again.
+
+The debug log makes this visible: if a call happened and there is no `CALLS: PHONE_STATE=...` line at
+all, the receiver never ran, which points at the OEM restriction rather than at the recorder.
