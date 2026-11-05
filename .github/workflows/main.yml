@@ -85,11 +85,15 @@ jobs:
         fi
         echo "### Signing fingerprint for this APK" >> "$GITHUB_STEP_SUMMARY"
         echo '```' >> "$GITHUB_STEP_SUMMARY"
-        keytool -list -v -keystore "$KS" -alias androiddebugkey \
-          -storepass android -keypass android 2>/dev/null | grep -E "SHA1:|SHA256:" | tee -a "$GITHUB_STEP_SUMMARY"
+        FP=$(keytool -list -v -keystore "$KS" -alias androiddebugkey \
+          -storepass android -keypass android 2>/dev/null | grep -E "SHA1:|SHA256:")
+        echo "$FP" | tee -a "$GITHUB_STEP_SUMMARY"
         echo '```' >> "$GITHUB_STEP_SUMMARY"
+        echo "Package name: com.example.callrecorder" >> "$GITHUB_STEP_SUMMARY"
+        echo "Register both values under APIs & Services > Credentials > OAuth client ID > Android." >> "$GITHUB_STEP_SUMMARY"
+        SHA1=$(echo "$FP" | sed -n 's/.*SHA1: *//p')
         echo "Package name: com.example.callrecorder"
-        echo "Register both values under APIs & Services > Credentials > OAuth client ID > Android."
+        echo "::notice title=Signing SHA-1 register this in Cloud Console::$SHA1"
 
     # Compiles the application and generates the APK
     - name: Build with Gradle
