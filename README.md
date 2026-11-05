@@ -179,3 +179,22 @@ works without it, because the credential is built from an `Account` object rathe
 
 The Settings screen now states which of the two situations you are in: permission missing, accounts
 hidden by Android 8+ visibility rules, or accounts genuinely visible.
+
+### Android 9 (API 28) specifics
+
+The confirmed test device runs **Android 9 / API 28**. Everything in the two sections above applies in
+full, because the account visibility rule keys off the *app's* targetSdk (26+), not the OS version —
+and three API-28 details are worth knowing:
+
+- **The call-state broadcast does arrive.** `ACTION_PHONE_STATE_CHANGED` is one of the documented
+  implicit-broadcast exemptions, so a manifest-declared receiver still fires on Android 9 after the
+  app has been swiped away. Before Android 12 there is also no restriction on starting a foreground
+  service from that receiver, so the recording pipeline is not blocked by background limits here.
+- **`READ_CALL_LOG` supplies the phone number.** On API 28 the number in `EXTRA_INCOMING_NUMBER` is
+  empty without it; the app falls back to `Unknown` rather than skipping the recording.
+- **Silent captures are the real Android 9 failure mode.** A third-party app may open
+  `VOICE_COMMUNICATION` with no error and record pure silence, leaving a valid MP4 with nothing
+  audible. Because `prepare()`/`start()` succeed, a start/fail fallback can never notice. The service
+  therefore samples `getMaxAmplitude()` after a 1.2 s warm-up and accepts a source only if it captured
+  sound, promoting whatever worked. `MIC` is now the default; on Android 9 that normally captures the
+  near side of the conversation only.
