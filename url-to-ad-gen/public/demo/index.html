@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Lumen Arc Desk Lamp — Nimbus Goods</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta property="og:type" content="product" />
+    <meta property="og:site_name" content="Nimbus Goods" />
+    <meta property="og:title" content="Lumen Arc Desk Lamp — adjustable brass task light" />
+    <meta
+      property="og:description"
+      content="A wireless, flicker-free desk lamp with a brass swing arm, three warmth presets and a touch dimmer that remembers your last setting."
+    />
+    <meta property="og:image" content="/demo/lamp-1.jpg" />
+    <meta property="product:price:amount" content="129.00" />
+    <meta property="product:price:currency" content="USD" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Lumen Arc Desk Lamp",
+        "brand": { "@type": "Brand", "name": "Nimbus Goods" },
+        "description": "A wireless, flicker-free desk lamp with a brass swing arm, three warmth presets and a touch dimmer that remembers your last setting. Designed for long work sessions and small desks.",
+        "image": ["/demo/lamp-1.jpg", "/demo/lamp-2.jpg", "/demo/lamp-3.jpg"],
+        "offers": {
+          "@type": "Offer",
+          "price": "129.00",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        }
+      }
+    </script>
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: #f6f5f2;
+        color: #17171b;
+      }
+      header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 18px 28px; border-bottom: 1px solid #e3e1dc; font-size: 14px;
+      }
+      header strong { letter-spacing: 0.14em; text-transform: uppercase; font-size: 13px; }
+      main {
+        display: grid; gap: 40px; padding: 40px 28px 80px; max-width: 1100px; margin: 0 auto;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      }
+      .gallery { display: grid; gap: 12px; }
+      .gallery img { width: 100%; border-radius: 14px; display: block; background: #eceae5; }
+      .thumbs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+      .thumbs img { aspect-ratio: 1; object-fit: cover; border-radius: 10px; cursor: pointer; }
+      h1 { font-size: 34px; line-height: 1.15; margin: 8px 0 6px; letter-spacing: -0.02em; }
+      .price { font-size: 22px; font-weight: 600; margin: 10px 0 18px; }
+      .desc { color: #55555f; line-height: 1.6; margin-bottom: 22px; }
+      ul { padding-left: 20px; color: #3b3b45; line-height: 1.8; }
+      button.buy {
+        margin-top: 26px; width: 100%; padding: 15px 20px; border: 0; border-radius: 999px;
+        background: #17171b; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+      }
+      .note { margin-top: 14px; font-size: 12px; color: #7a7a86; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Nimbus Goods</strong>
+      <nav>Shop · Journal · Support</nav>
+    </header>
+    <main>
+      <div class="gallery">
+        <img id="hero" src="/demo/lamp-1.jpg" alt="Lumen Arc desk lamp" />
+        <div class="thumbs">
+          <img src="/demo/lamp-1.jpg" alt="Lamp studio view" onclick="document.getElementById('hero').src=this.src" />
+          <img src="/demo/lamp-2.jpg" alt="Lamp in use" onclick="document.getElementById('hero').src=this.src" />
+          <img src="/demo/lamp-3.jpg" alt="Lamp dial detail" onclick="document.getElementById('hero').src=this.src" />
+        </div>
+      </div>
+      <section>
+        <h1>Lumen Arc Desk Lamp</h1>
+        <div class="price">$129.00</div>
+        <p class="desc">
+          A wireless, flicker-free desk lamp with a brass swing arm, three warmth presets and a touch dimmer that
+          remembers your last setting — built for long work sessions and very small desks.
+        </p>
+        <ul>
+          <li>18-hour battery on a single charge, charged over USB-C</li>
+          <li>Flicker-free 4000K–2700K light that is easy on the eyes at night</li>
+          <li>Brass swing arm adjusts through 140 degrees and stays where you put it</li>
+          <li>Touch dimmer with three presets and memory of your last brightness</li>
+          <li>Weighs 1.4 kg with a weighted base that will not slide while typing</li>
+          <li>Ships in recycled packaging with a two-year warranty</li>
+        </ul>
+        <button class="buy">Add to cart</button>
+        <p class="note">
+          Demo product page bundled with url-to-ad-gen so the scraper can be tested offline. In a real run, point the
+          app at any product URL on the web.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,116 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #0b0b10;
+  --color-ink-soft: #14141d;
+  --color-line: #24242f;
+  --color-brand: #7c5cff;
+  --color-brand-soft: #a58bff;
+  --color-accent: #26e0a8;
+  --color-muted: #9a9aad;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+html,
+body {
+  background-color: var(--color-ink);
+  color: #f5f5fa;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-image:
+    radial-gradient(60rem 40rem at 15% -10%, rgba(124, 92, 255, 0.22), transparent 60%),
+    radial-gradient(50rem 35rem at 95% 0%, rgba(38, 224, 168, 0.14), transparent 55%);
+  background-repeat: no-repeat;
+}
+
+::selection {
+  background: rgba(124, 92, 255, 0.45);
+}
+
+.card {
+  border: 1px solid var(--color-line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015));
+  border-radius: 1rem;
+  backdrop-filter: blur(6px);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.75rem;
+  font-weight: 600;
+  font-size: 0.925rem;
+  padding: 0.7rem 1.15rem;
+  transition: transform 140ms ease, filter 140ms ease, background-color 140ms ease;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--color-brand), #5b7cff);
+  color: #fff;
+  box-shadow: 0 10px 30px -12px rgba(124, 92, 255, 0.85);
+}
+
+.btn-primary:not(:disabled):hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.btn-ghost {
+  border-color: var(--color-line);
+  background: rgba(255, 255, 255, 0.03);
+  color: #e7e7f1;
+}
+
+.btn-ghost:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.field {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-line);
+  background: rgba(9, 9, 14, 0.75);
+  padding: 0.75rem 0.9rem;
+  color: #f5f5fa;
+  outline: none;
+  font-size: 0.95rem;
+}
+
+.field:focus {
+  border-color: var(--color-brand-soft);
+  box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.1);
+}
+
+.scrollbar-slim::-webkit-scrollbar {
+  width: 8px;
+}
+.scrollbar-slim::-webkit-scrollbar-thumb {
+  background: #2a2a36;
+  border-radius: 99px;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUp 320ms ease both;
+}
